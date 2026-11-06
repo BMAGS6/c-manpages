@@ -71,6 +71,37 @@ Source filenames must be lowercase and hyphen-separated. Generated manual names
 must be unique across all categories. The build stops on invalid metadata,
 name collisions, or a mismatch between the source filename and its title.
 
-**Not implemented in Phase A:** rewriting relative Markdown links to generated
-HTML links and `.Xr` references, or generating site-wide navigation. Those are
-the subsequent milestones; regular text references remain unchanged for now.
+## Cross-references between manual pages
+
+Write links between the canonical Markdown documents using ordinary relative
+Markdown syntax. **Do not** link to generated HTML output from a source page:
+
+```markdown
+For more information, see
+[storage duration](../concepts/storage-duration.md).
+```
+
+The build automatically converts this to a link to
+`c-storage-duration.7.html` in HTML, and a semantic `.Xr c-storage-duration 7`
+reference in Unix mdoc. The rendered mdoc reference displays the **manual
+name**, rather than an arbitrary Markdown link label. Normal web URLs, other
+files, and source Markdown remain unchanged.
+
+The target Markdown page **must already exist** when a link is added. A missing
+`.md` page or invalid section fragment causes `make`/`make html` to fail with a
+clear error instead of silently producing a broken link. For unwritten pages,
+keep a plain textual reference such as `` `c-linkage(7)` `` until the document
+has been created.
+
+HTML cross-page fragments such as
+`[static objects](../concepts/storage-duration.md#static-storage-duration)`
+are preserved and checked against lowdown's actual generated HTML element IDs.
+In terminal manuals, `.Xr` references the entire target manual; it cannot
+identify a section within that manual. The fragment is still checked.
+
+The build records discovered link dependencies in `build/references/`. Editing a
+linked page causes its referring pages to be revalidated. As before, run
+`make clean` after **deleting or renaming** a documentation page to remove
+orphaned generated files.
+
+Site-wide navigation and a homepage are planned for the next milestone.

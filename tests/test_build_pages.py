@@ -41,6 +41,7 @@ class BuildTests(unittest.TestCase):
             "THIS_FILE": self.root / "tools" / "build_pages.py",
             "HTML_BUILDER": self.root / "tools" / "build_html.py",
             "HIGHLIGHTER": self.root / "tools" / "highlight_html.py",
+            "XREFS": self.root / "tools" / "xrefs.py",
             "HTML_TEMPLATE": self.root / "templates" / "page.html",
             "SITE_CSS": self.root / "assets" / "site.css",
         }
@@ -55,6 +56,7 @@ class BuildTests(unittest.TestCase):
         # lowdown command produces a minimal standalone HTML fixture for it.
         for relative in (
             "tools/build_pages.py", "tools/build_html.py", "tools/highlight_html.py",
+            "tools/xrefs.py",
             "templates/page.html", "assets/site.css",
         ):
             destination = self.root / relative
@@ -64,17 +66,23 @@ class BuildTests(unittest.TestCase):
         self.fake_lowdown = self.root / "fake-lowdown"
         self.fake_lowdown.write_text(
             "#!/usr/bin/env python3\n"
-            "import pathlib, sys\n"
+            "import pathlib, re, sys\n"
             "source = pathlib.Path(sys.argv[-1]).read_text()\n"
             "if 'FAIL_CONVERSION' in source:\n"
             "    print('simulated converter failure', file=sys.stderr)\n"
             "    sys.exit(2)\n"
             "name = source.splitlines()[0].split(': ', 1)[1]\n"
+            "links = re.findall(r'\\[([^\\]]+)\\]\\(([^)]+)\\)', source)\n"
             "if 'mdoc' in sys.argv:\n"
             "    print('.Dd November 6, 2026\\n.Dt ' + name + ' 7\\n.Sh NAME')\n"
+            "    for label, href in links:\n"
+            "        print('.Lk ' + href + ' ' + label)\n"
             "else:\n"
             "    print('<html><head><title>' + name + '</title></head>'\n"
-            "          '<body><h1 id=\"name\">NAME</h1><p>Test</p></body></html>')\n",
+            "          '<body><h1 id=\"name\">NAME</h1><p>Test</p>')\n"
+            "    for label, href in links:\n"
+            "        print('<p><a href=\"' + href + '\">' + label + '</a></p>')\n"
+            "    print('</body></html>')\n",
             encoding="utf-8",
         )
         self.fake_lowdown.chmod(0o755)
@@ -239,6 +247,106 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(build_pages.BuildError, "simulated converter failure"):
             builder.build_man()
         self.assertEqual(previous_bytes, output.read_bytes())
+
+
+    def test_internal_links_are_resolved_in_both_formats(self):
+        """A single Markdown link becomes .Xr in mdoc and an HTML man link."""
+        source = self.make_source("keywords", "static")
+        self.make_source("concepts", "storage-duration")
+        source.write_text(
+            source.read_text() +
+            "\nSee [storage duration](../concepts/storage-duration.md).\n" +
+            "See [external](https://example.org/manual).\n"
+        )
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_man()
+            builder.build_html()
+        page = next(page for page in builder.pages if page.name == "c-static")
+        man_text = page.man_path.read_text()
+        html_text = page.html_path.read_text()
+        self.assertIn(".Xr c-storage-duration 7", man_text)
+        self.assertIn(".Lk https://example.org/manual external", man_text)
+        self.assertIn('href="c-storage-duration.7.html"', html_text)
+        self.assertIn('href="https://example.org/manual"', html_text)
+
+    def test_linked_page_change_rebuilds_its_referrer(self):
+        """A target edit causes direct referrers to rebuild in both formats."""
+        source = self.make_source("keywords", "static")
+        target = self.make_source("concepts", "storage-duration")
+        source.write_text(source.read_text() +
+                          "\n[storage duration](../concepts/storage-duration.md)\n")
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_man()
+            builder.build_html()
+        page = next(page for page in builder.pages if page.name == "c-static")
+        before = (page.man_path.stat().st_mtime_ns, page.html_path.stat().st_mtime_ns)
+
+        # Advance the target timestamp past both generated files, even on
+        # filesystems whose mtime precision is relatively coarse.
+        target.write_text(target.read_text() + "\nA new section.\n")
+        later = max(before) + 2_000_000_000
+        os.utime(target, ns=(later, later))
+        with redirect_stdout(io.StringIO()):
+            builder.build_man()
+            builder.build_html()
+        after = (page.man_path.stat().st_mtime_ns, page.html_path.stat().st_mtime_ns)
+        self.assertNotEqual(before, after)
+
+    def test_broken_link_fails_without_overwriting_last_success(self):
+        """A missing linked page is reported before any output is published."""
+        source = self.make_source("keywords", "static")
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_man()
+            builder.build_html()
+        output = builder.pages[0].man_path
+        original = output.read_bytes()
+        source.write_text(source.read_text() +
+                          "\n[missing](../concepts/not-written.md)\n")
+        with self.assertRaisesRegex(build_pages.BuildError, "missing manual link"):
+            builder.build_man()
+        self.assertEqual(original, output.read_bytes())
+        with self.assertRaisesRegex(build_pages.BuildError, "missing manual link"):
+            builder.build_html()
+
+    def test_deleted_link_target_is_detected_even_when_source_unchanged(self):
+        """A sidecar catches a deleted target during an incremental build."""
+        source = self.make_source("keywords", "static")
+        target = self.make_source("concepts", "storage-duration")
+        source.write_text(source.read_text() +
+                          "\n[storage](../concepts/storage-duration.md)\n")
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_man()
+        target.unlink()
+        # Every real `make` invocation rediscovers pages. Simulate that new
+        # process, rather than relying on the outdated in-memory registry.
+        builder = self.builder()
+        with self.assertRaisesRegex(build_pages.BuildError, "previously linked manual"):
+            builder.build_man()
+
+    def test_removing_deleted_reference_can_be_rebuilt(self):
+        """Editing away an obsolete link must bypass stale dependencies."""
+        source = self.make_source("keywords", "static")
+        target = self.make_source("concepts", "storage-duration")
+        original_source = source.read_text()
+        source.write_text(original_source +
+                          "\n[storage](../concepts/storage-duration.md)\n")
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_man()
+        referring_page = next(page for page in builder.pages if page.name == "c-static")
+        generated_stamp = referring_page.man_path.stat().st_mtime_ns
+        source.write_text(original_source)
+        later = max(source.stat().st_mtime_ns, generated_stamp) + 2_000_000_000
+        os.utime(source, ns=(later, later))
+        target.unlink()
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_man()
+        self.assertNotIn(".Xr c-storage-duration 7", referring_page.man_path.read_text())
 
 
 if __name__ == "__main__":

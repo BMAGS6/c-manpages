@@ -9,19 +9,22 @@ This module performs five deliberately narrow jobs:
 4. Rebuild only outputs whose input files have changed.
 5. Report errors without overwriting a previously successful build artifact.
 
-It does *not* parse arbitrary Markdown or implement cross-references. Those
-features belong to later milestones. The POSIX Makefile is the public interface;
-this small coordinator supplies dynamic discovery, which POSIX make lacks.
+Cross-reference resolution is delegated to ``tools/xrefs.py``. The POSIX
+Makefile remains the public interface; this coordinator supplies automatic
+discovery and dependency tracking without GNU Make extensions.
 """
 
 import argparse
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
+
+from xrefs import ReferenceError, ReferenceResolver, rewrite_html, rewrite_mdoc
 
 
 # Resolve from this file rather than the current working directory. This also
@@ -32,6 +35,7 @@ BUILD_DIR = ROOT / "build"
 THIS_FILE = Path(__file__).resolve()
 HTML_BUILDER = ROOT / "tools" / "build_html.py"
 HIGHLIGHTER = ROOT / "tools" / "highlight_html.py"
+XREFS = ROOT / "tools" / "xrefs.py"
 HTML_TEMPLATE = ROOT / "templates" / "page.html"
 SITE_CSS = ROOT / "assets" / "site.css"
 
@@ -223,44 +227,129 @@ def copy_atomic(source, destination):
 
 
 class Builder:
-    """Apply one requested format/action to the shared discovered page list."""
+    """Apply one requested output format to all registered manual pages.
+
+    Phase B records direct manual dependencies in small generated JSON files.
+    Each format maintains its own dependency list because an HTML rebuild and
+    a roff rebuild can happen independently. Sidecars are saved in ``build/``
+    (never the canonical Markdown directory) and removed by ``make clean``.
+
+    If a linked page changes, referencing documents are rebuilt to revalidate
+    fragment anchors. A deleted linked page is reported even if the referring
+    document itself has not changed. This avoids quietly serving broken links
+    from stale incremental output.
+    """
 
     def __init__(self, pages, lowdown="lowdown", mandoc="mandoc", man="man"):
         self.pages = pages
         self.lowdown = lowdown
         self.mandoc = mandoc
         self.man = man
+        self.references = ReferenceResolver(pages, self.raw_html)
+
+    def raw_html(self, page):
+        """Ask lowdown for the exact HTML used to validate fragment IDs."""
+        return capture([self.lowdown, "-s", "-t", "html", str(page.source)])
+
+    def dependency_path(self, page, format_name):
+        """Locate the generated, per-format manifest for a manual page."""
+        return BUILD_DIR / "references" / format_name / f"{page.name}.{page.section}.json"
+
+    def saved_references(self, page, format_name):
+        """Read previously resolved target paths; return None if unavailable.
+
+        This sidecar is a cache, not an authoritative document. Missing or
+        invalid files are regenerated during the next successful conversion.
+        Relative paths keep generated metadata independent of the checkout's
+        absolute location.
+        """
+        sidecar = self.dependency_path(page, format_name)
+        if not sidecar.is_file():
+            return None
+        try:
+            values = json.loads(sidecar.read_text(encoding="utf-8"))
+            if not isinstance(values, dict) or not isinstance(values.get("targets"), list):
+                return None
+            paths = values["targets"]
+            if not all(isinstance(path, str) and path.startswith("pages/") for path in paths):
+                return None
+            return [(ROOT / path).resolve() for path in paths]
+        except (ValueError, OSError, UnicodeError):
+            return None
+
+    def should_build(self, page, format_name, output, dependencies):
+        """Check direct inputs first, then transitive manual-page inputs.
+
+        Checking the author's source before saved dependencies matters: when a
+        link has been removed from Markdown, the old linked file may also have
+        been deleted. We must rebuild the changed authoring source rather than
+        incorrectly fail using an obsolete sidecar.
+        """
+        sidecar = self.dependency_path(page, format_name)
+        direct = (page.source, THIS_FILE, XREFS, sidecar, *dependencies)
+        stored = self.saved_references(page, format_name)
+        if stored is None or needs_build(output, direct):
+            return True
+
+        registered = self.references.pages_by_path
+        for target in stored:
+            if target not in registered or not target.is_file():
+                raise BuildError(
+                    f"{page.source}: previously linked manual page is missing: {target}"
+                )
+        return needs_build(output, stored)
+
+    def publish(self, page, format_name, output, contents, targets):
+        """Publish a converted page and the links that affect its freshness.
+
+        Write the manifest first, then the finished page. If the final write
+        fails, the manifest is newer than the last good output, forcing a
+        retry. Conversion errors occur before either file is touched.
+        """
+        sidecar = self.dependency_path(page, format_name)
+        paths = sorted(str(target.relative_to(ROOT)) for target in targets)
+        manifest = json.dumps({"targets": paths}, indent=2) + "\n"
+        write_atomic(sidecar, manifest)
+        write_atomic(output, contents)
 
     def build_man(self):
-        """Generate the same lowdown mdoc output as the original Makefile."""
+        """Generate mdoc and replace only registered internal .Lk references."""
         for page in self.pages:
-            if not needs_build(page.man_path, (page.source, THIS_FILE)):
+            if not self.should_build(page, "man", page.man_path, ()):
                 continue
             result = capture([
                 self.lowdown, "-s", "-t", "mdoc", "--roff-manpage", str(page.source)
             ])
             if not result.strip():
                 raise BuildError(f"empty mdoc output from {page.source}")
-            write_atomic(page.man_path, result)
+            try:
+                transformed, targets = rewrite_mdoc(result, self.references, page)
+            except ReferenceError as error:
+                raise BuildError(str(error)) from error
+            self.publish(page, "man", page.man_path, transformed, targets)
             print(f"MAN   {page.man_path.relative_to(ROOT)}")
 
     def build_html(self):
-        """Run the existing lowdown and Pygments/template HTML pipeline."""
-        shared_inputs = (THIS_FILE, HTML_BUILDER, HIGHLIGHTER, HTML_TEMPLATE, SITE_CSS)
+        """Resolve .md hyperlinks before the existing HTML presentation step."""
+        shared_inputs = (HTML_BUILDER, HIGHLIGHTER, HTML_TEMPLATE, SITE_CSS)
         for page in self.pages:
-            if not needs_build(page.html_path, (page.source, *shared_inputs)):
+            if not self.should_build(page, "html", page.html_path, shared_inputs):
                 continue
-            raw = capture([self.lowdown, "-s", "-t", "html", str(page.source)])
+            raw = self.raw_html(page)
             if not raw.strip():
                 raise BuildError(f"empty lowdown HTML output from {page.source}")
+            try:
+                transformed, targets = rewrite_html(raw, self.references, page)
+            except ReferenceError as error:
+                raise BuildError(str(error)) from error
             final = capture([
                 sys.executable, str(HTML_BUILDER),
                 "--template", str(HTML_TEMPLATE),
                 "--css", str(SITE_CSS), "--section", page.section,
-            ], input_text=raw)
+            ], input_text=transformed)
             if not final.strip():
                 raise BuildError(f"empty enhanced HTML output from {page.source}")
-            write_atomic(page.html_path, final)
+            self.publish(page, "html", page.html_path, final, targets)
             print(f"HTML  {page.html_path.relative_to(ROOT)}")
 
     def lint(self, strict=False):
