@@ -46,7 +46,7 @@ class NativeServerTests(unittest.TestCase):
 
         command = [
             compiler,
-            "-std=c17",
+            "-std=c99",
             "-Wall",
             "-Wextra",
             "-Wpedantic",
@@ -61,7 +61,7 @@ class NativeServerTests(unittest.TestCase):
         result = subprocess.run(command, capture_output=True, text=True)
         if result.returncode:
             cls.temporary.cleanup()
-            raise AssertionError(f"C17 compile failed:\n{result.stdout}\n{result.stderr}")
+            raise AssertionError(f"C99 compile failed:\n{result.stdout}\n{result.stderr}")
 
         # Choose an available port, then close the probe socket before bind.
         # A localhost port can be taken in the tiny gap; treat that as failure.
@@ -119,6 +119,59 @@ class NativeServerTests(unittest.TestCase):
                 response.extend(chunk)
         headers, body = bytes(response).split(b"\r\n\r\n", maxsplit=1)
         return headers, body
+
+    def test_help_reports_defaults_without_starting_listener(self):
+        """Informational CLI output uses stdout and the one true defaults."""
+        result = subprocess.run(
+            [str(self.executable), "--help"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--root build/html --port 8000", result.stdout)
+        self.assertEqual(result.stderr, "")
+
+    def test_rejects_invalid_port_arguments(self):
+        """A bad port must fail before opening a listener or changing port."""
+        invalid_ports = (
+            "", "0", "65536", "-1", "+8000", " 8000", "8000 ",
+            "8abc", "0x1f40", "80.00", "99999999999999999999999999999",
+        )
+        for value in invalid_ports:
+            with self.subTest(value=value):
+                result = subprocess.run(
+                    [str(self.executable), "--port", value],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Invalid argument", result.stderr)
+                self.assertIn("Usage:", result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_rejects_missing_arguments_and_empty_root(self):
+        """Missing option values and an empty document root are errors."""
+        arguments = ("--port", "--root", "--unexpected")
+        for option in arguments:
+            with self.subTest(option=option):
+                result = subprocess.run(
+                    [str(self.executable), option],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Usage:", result.stderr)
+        result = subprocess.run(
+            [str(self.executable), "--root", ""],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid argument", result.stderr)
 
     def test_get_static_document(self):
         """A successful GET returns the document and sensible HTTP headers."""

@@ -111,7 +111,7 @@ Site-wide navigation and a homepage are planned for the next milestone.
 Opening a single HTML page through `xdg-open` can put it behind the desktop's
 XDG document portal, causing links to neighboring HTML files to fail. Instead,
 the repository includes an intentionally tiny, **blocking**, local-only HTTP
-preview server written in ISO C17-compatible code. It uses no third-party
+preview server written in ISO C99-compatible code. It uses no third-party
 HTTP library and works with POSIX sockets or Windows Winsock2.
 
 On a POSIX system, from the repository root:
@@ -119,6 +119,8 @@ On a POSIX system, from the repository root:
 ```sh
 make serve                         # Build HTML, compile C server, serve locally.
 make serve PORT=8080               # Pick another local port.
+make server CSTD=c99               # Compile the optional server as C99 (default).
+make server CSTD=c17               # Compile the optional server as C17.
 make server CSTD=c23               # Compile the optional server as C23.
 make serve CSTD=c23 PORT=8080      # Use that version for the preview.
 make serve BACKEND=python          # Alternative: Python standard-library server.
@@ -130,9 +132,13 @@ the root URL opens `c-static.7.html`.
 
 The C standard is selected by the **compiler** using `-std=$(CSTD)`. Source
 `#if __STDC_VERSION__` checks permit optional newer-language code, but do not
-change a compiler's language mode. C17 is the lowest supported standard; C23
-is supported with a sufficiently recent compiler. An experimental C29 mode is
-not promised until compilers actually support one.
+change a compiler's language mode. ISO C99 is the minimum language standard;
+C11, C17, and C23 are supported when the compiler offers those modes. An
+experimental C29 mode is not promised until compilers actually support one.
+This is independent of platform APIs: POSIX sockets and Windows Winsock2 are
+not part of ISO C. Microsoft's MSVC does not offer a C99 compilation mode;
+Windows builds with MinGW-w64 can use C99, while MSVC requires separate build
+instructions and a newer mode.
 
 ### Windows (MinGW-w64 / MSYS2)
 
@@ -161,6 +167,13 @@ allowed. Symbolic links/reparse points and unknown file types are declined.
 The source directory is assumed to contain trusted, generated documentation.
 This is not a hardened server for use on untrusted networks or for hosting
 arbitrary third-party files; it does not implement TLS or concurrent clients.
+
+The server uses named configuration constants for HTTP status codes,
+resource limits, the default preview directory, the listener backlog, and
+socket timeouts. To avoid surprising behavior, the `--port` argument accepts
+**decimal digits only**, in the range 1–65535: no whitespace, signs, or
+trailing characters. Invalid arguments print usage to stderr, without starting
+a network listener.
 
 Test the server separately with:
 

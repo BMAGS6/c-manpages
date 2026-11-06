@@ -8,7 +8,7 @@
  * CPU-intensive loops when the server has no clients.
  */
 #ifndef _WIN32
-    /* Expose POSIX socket and timeval APIs on strict -std=c17 builds. */
+    /* Expose POSIX socket and timeval APIs on strict C99 and newer language modes. */
     #define _POSIX_C_SOURCE 200809L
 #endif
 
@@ -23,6 +23,12 @@
     #include <netinet/in.h>
     #include <unistd.h>
 #endif
+
+/* A small loopback-only preview server does not need a large accept queue. */
+#define SOCKET_PLATFORM_LISTEN_BACKLOG 8
+
+/* Winsock expresses socket timeouts in milliseconds, not seconds. */
+#define SOCKET_PLATFORM_MILLISECONDS_PER_SECOND 1000u
 
 
 int socket_platform_initialize(void)
@@ -118,7 +124,7 @@ socket_platform_socket_t socket_platform_listen(uint16_t port)
     address.sin_port        = htons(port);
 
     if (bind(listener, (const struct sockaddr*)&address, sizeof(address)) != 0 ||
-        listen(listener, 8) != 0)
+        listen(listener, SOCKET_PLATFORM_LISTEN_BACKLOG) != 0)
     {
         socket_platform_close(listener);
         return SOCKET_PLATFORM_INVALID;
@@ -136,7 +142,7 @@ int socket_platform_set_timeouts(socket_platform_socket_t client, unsigned int s
 {
 #ifdef _WIN32
     /* Winsock uses a DWORD millisecond timeout for SO_RCVTIMEO/SO_SNDTIMEO. */
-    DWORD milliseconds = (DWORD)seconds * 1000u;
+    DWORD milliseconds = (DWORD)seconds * SOCKET_PLATFORM_MILLISECONDS_PER_SECOND;
     const char* value  = (const char*)&milliseconds;
     int length         = (int)sizeof(milliseconds);
 #else

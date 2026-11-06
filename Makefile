@@ -15,7 +15,7 @@ PAGE_BUILDER = tools/build_pages.py
 PAGE = c-static
 
 # Optional local preview server. CC is the native C compiler; choose a dialect
-# with CSTD=c17 (portable baseline) or CSTD=c23 (newer compilers). The standard
+# with CSTD=c99 (portable baseline), CSTD=c17, or CSTD=c23. The standard
 # becomes part of the output path so different dialects do not collide.
 #
 # On MinGW/MSYS2 use EXE=.exe SERVER_LIBS=-lws2_32.  The server is entirely
@@ -23,7 +23,7 @@ PAGE = c-static
 # Set the native compiler explicitly. With .POSIX:, some make implementations
 # default CC to the C99-specific 'c99' driver, which rejects -std=c17/c23.
 CC = cc
-CSTD = c17
+CSTD = c99
 SERVER_CFLAGS = -O2 -Wall -Wextra -Wpedantic -std=$(CSTD)
 SERVER_LIBS =
 EXE =
@@ -86,7 +86,7 @@ doctor:
 	}
 	@$(PYTHON) "$(PAGE_BUILDER)" list
 
-# Build a tiny C17+ localhost-only web server. Only this optional target
+# Build a tiny C99+ localhost-only web server. Only this optional target
 # requires a native C compiler or Winsock link library.
 $(SERVER_EXE): $(SERVER_SOURCES) server/socket_platform.h
 	mkdir -p "build/bin/$(CSTD)"

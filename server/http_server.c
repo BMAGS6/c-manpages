@@ -11,7 +11,7 @@
  * 5. Reject URL encoding, path separators and nonportable filenames rather
  *    than attempting complex, error-prone path normalization.
  * 6. Use a fixed request buffer, fixed file buffer and bounded socket waits.
- * 7. Stay source-compatible with C17 and C23 on POSIX and Windows.
+ * 7. Require C99, while also supporting newer C language modes where available.
  *
  * This is a *development preview utility*, not a general-purpose production
  * HTTP daemon. In particular it has no TLS, authentication, persistent
@@ -22,18 +22,16 @@
  * site-wide index.html will work without changing the server.
  */
 #ifndef _WIN32
-    /* Request lstat() declarations in a strict C17 compilation environment. */
+    /* Expose lstat() in strict ISO C99 and newer compiler modes. */
     #define _POSIX_C_SOURCE 200809L
 #endif
 
-#include "socket_platform.h"
-
-#include <errno.h>
-#include <limits.h>
-#include <signal.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <limits.h>
+#include <errno.h>
+#include <signal.h>
 #include <string.h>
 #include <sys/stat.h>
 
@@ -41,22 +39,64 @@
     #include <windows.h>
 #endif
 
-#if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 201710L
-    #error "c-manpages-serve requires ISO C17 or a newer C standard"
+#include "socket_platform.h"
+
+/*
+ * C99 is our portable language baseline. The selected compiler dialect—not
+ * these tests—determines which ISO C features are available. __STDC_VERSION__
+ * is only used here to reject older modes and report the active one.
+ */
+#if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 199901L
+    #error "c-manpages-serve requires ISO C99 or newer"
 #endif
 
-/* Compile in either -std=c17 or -std=c23; no C23 feature is mandatory. */
 #if __STDC_VERSION__ >= 202311L
     #define SERVER_C_STANDARD "C23 or newer"
-#else
+#elif __STDC_VERSION__ >= 201710L
     #define SERVER_C_STANDARD "C17"
+#elif __STDC_VERSION__ >= 201112L
+    #define SERVER_C_STANDARD "C11"
+#else
+    #define SERVER_C_STANDARD "C99"
 #endif
 
-#define SERVER_DEFAULT_PORT    8000u
-#define SERVER_REQUEST_LIMIT   8192u
-#define SERVER_PATH_LIMIT       512u
-#define SERVER_FILE_BUFFER     8192u
-#define SERVER_TIMEOUT_SECONDS    5u
+/*
+ * Configuration shared by startup, path validation and response generation.
+ * Keep these limits centralized so changing an I/O buffer does not require
+ * hunting down separate numeric literals in unrelated functions.
+ *
+ * Each value describes the allocated byte capacity, not the length of a
+ * string that fits inside it (which must also reserve one byte for '\0').
+ */
+#define SERVER_DEFAULT_PORT             8000u
+#define SERVER_DEFAULT_ROOT             "build/html"
+#define SERVER_INDEX_FILENAME           "index.html"
+#define SERVER_FALLBACK_FILENAME        "c-static.7.html"
+#define SERVER_REQUEST_LIMIT            8192u
+#define SERVER_PATH_LIMIT                512u
+#define SERVER_RESPONSE_HEADER_LIMIT    1024u
+#define SERVER_FILESYSTEM_PATH_LIMIT    4096u
+#define SERVER_FILE_BUFFER              8192u
+#define SERVER_TIMEOUT_SECONDS             5u
+
+/**
+ * @brief Explicit numeric codes for the HTTP responses this server emits.
+ *
+ * The protocol assigns these numbers: their values are not arbitrary tuning
+ * parameters. Named constants prevent accidentally using the wrong status
+ * while keeping wire-format output unchanged.
+ */
+typedef enum http_status
+{
+    HTTP_STATUS_OK                    = 200,
+    HTTP_STATUS_BAD_REQUEST           = 400,
+    HTTP_STATUS_FORBIDDEN             = 403,
+    HTTP_STATUS_NOT_FOUND             = 404,
+    HTTP_STATUS_METHOD_NOT_ALLOWED    = 405,
+    HTTP_STATUS_URI_TOO_LONG          = 414,
+    HTTP_STATUS_HEADERS_TOO_LARGE     = 431,
+    HTTP_STATUS_INTERNAL_ERROR        = 500
+} http_status_e;
 
 /**
  * @brief Save the server configuration after command-line validation.
@@ -119,7 +159,7 @@ static int send_headers(socket_platform_socket_t client,
                         long length,
                         const char* extra_headers)
 {
-    char header[1024];
+    char header[SERVER_RESPONSE_HEADER_LIMIT];
     int count = snprintf(header,
                          sizeof(header),
                          "HTTP/1.1 %u %s\r\n"
@@ -155,7 +195,7 @@ static void send_error(socket_platform_socket_t client,
                        int head_only)
 {
     static const char body[] = "C Manual Pages: request could not be served.\n";
-    const char* extra = status == 405u ? "Allow: GET, HEAD\r\n" : "";
+    const char* extra = status == HTTP_STATUS_METHOD_NOT_ALLOWED ? "Allow: GET, HEAD\r\n" : "";
 
     if (send_headers(client,
                      status,
@@ -201,30 +241,63 @@ static int read_request(socket_platform_socket_t client, char* request, size_t c
     return -2;
 }
 
+
 /**
- * @brief Parse a decimal TCP port in the supported range [1, 65535].
- * @return 0 on success, -1 on invalid input.
+ * @brief Convert a decimal string into a valid TCP port.
+ *
+ * @details
+ * The input must contain one or more ASCII decimal digits, with no
+ * leading or trailing whitespace, signs, or other characters.
+ *
+ * The conversion uses strtoul() to detect arithmetic overflow
+ * independently of the width of unsigned long.
+ *
+ * @param text Null-terminated string containing the port number.
+ * @param result Receives the validated port on success.
+ *
+ * @return 0 on success, or -1 if the input is invalid.
+ *
+ * @note The output parameter is not modified when validation fails.
+ * @note NULL input and output pointers are rejected without dereferencing.
  */
 static int parse_port(const char* text, uint16_t* result)
 {
+    const unsigned char* cursor;
     char* end = NULL;
     unsigned long value;
+    int conversion_error;
 
-    if (text[0] == '\0' || text[0] == '-' || text[0] == '+')
+    if (text == NULL || result == NULL || *text == '\0')
         return -1;
 
+    cursor = (const unsigned char*)text;
+
+    /* Reject characters that strtoul() might otherwise accept. */
+    for (; *cursor != '\0'; cursor++)
+        if (*cursor < '0' || *cursor > '9')
+            return -1;
+
+    /*
+     * Clear any earlier error before conversion, then capture errno
+     * immediately so later library calls cannot overwrite our result.
+     */
     errno = 0;
     value = strtoul(text, &end, 10);
-    int err = errno;
+    conversion_error = errno;
 
-    if (err != 0 || *end != '\0' || value == 0u || value > 65535u)
+    if (conversion_error != 0 ||
+        *end  != '\0'         ||
+        value == 0u           ||
+        value > UINT16_MAX)
     {
         return -1;
     }
 
     *result = (uint16_t)value;
+
     return 0;
 }
+
 
 /**
  * @brief Decide the MIME type based on a trusted, validated flat filename.
@@ -291,7 +364,7 @@ static int decode_target(const char* target, char filename[SERVER_PATH_LIMIT])
     if (*cursor == '\0' || *cursor == '?')
     {
         /* Phase C will generate index.html; fall back to the first manual. */
-        (void)strcpy(filename, "index.html");
+        (void)strcpy(filename, SERVER_INDEX_FILENAME);
         return 0;
     }
 
@@ -349,7 +422,7 @@ static unsigned int serve_file(socket_platform_socket_t client,
                                const char* filename,
                                int head_only)
 {
-    char path[4096];
+    char path[SERVER_FILESYSTEM_PATH_LIMIT];
     unsigned char buffer[SERVER_FILE_BUFFER];
     const char* type = mime_type_for(filename);
     FILE* file;
@@ -358,28 +431,28 @@ static unsigned int serve_file(socket_platform_socket_t client,
 
     if (type == NULL)
     {
-        send_error(client, 403u, "Forbidden", head_only);
-        return 403u;
+        send_error(client, HTTP_STATUS_FORBIDDEN, "Forbidden", head_only);
+        return HTTP_STATUS_FORBIDDEN;
     }
 
     count = snprintf(path, sizeof(path), "%s/%s", config->root, filename);
     if (count < 0 || (size_t)count >= sizeof(path))
     {
-        send_error(client, 414u, "URI Too Long", head_only);
-        return 414u;
+        send_error(client, HTTP_STATUS_URI_TOO_LONG, "URI Too Long", head_only);
+        return HTTP_STATUS_URI_TOO_LONG;
     }
 
     if (!is_safe_regular_file(path))
     {
-        send_error(client, 404u, "Not Found", head_only);
-        return 404u;
+        send_error(client, HTTP_STATUS_NOT_FOUND, "Not Found", head_only);
+        return HTTP_STATUS_NOT_FOUND;
     }
 
     file = fopen(path, "rb");
     if (file == NULL)
     {
-        send_error(client, 404u, "Not Found", head_only);
-        return 404u;
+        send_error(client, HTTP_STATUS_NOT_FOUND, "Not Found", head_only);
+        return HTTP_STATUS_NOT_FOUND;
     }
 
     /* fseek/ftell is adequate for these small, generated documentation files.
@@ -390,14 +463,14 @@ static unsigned int serve_file(socket_platform_socket_t client,
         fseek(file, 0L, SEEK_SET) != 0)
     {
         (void)fclose(file);
-        send_error(client, 500u, "Internal Server Error", head_only);
-        return 500u;
+        send_error(client, HTTP_STATUS_INTERNAL_ERROR, "Internal Server Error", head_only);
+        return HTTP_STATUS_INTERNAL_ERROR;
     }
 
-    if (send_headers(client, 200u, "OK", type, length, "") != 0)
+    if (send_headers(client, HTTP_STATUS_OK, "OK", type, length, "") != 0)
     {
         (void)fclose(file);
-        return 200u;
+        return HTTP_STATUS_OK;
     }
 
     if (!head_only)
@@ -410,7 +483,7 @@ static unsigned int serve_file(socket_platform_socket_t client,
     }
 
     (void)fclose(file);
-    return 200u;
+    return HTTP_STATUS_OK;
 }
 
 /**
@@ -440,7 +513,7 @@ static void handle_client(socket_platform_socket_t client, const server_config_t
     parsed = read_request(client, request, sizeof(request));
     if (parsed != 0)
     {
-        send_error(client, parsed == -2 ? 431u : 400u,
+        send_error(client, parsed == -2 ? HTTP_STATUS_HEADERS_TOO_LARGE : HTTP_STATUS_BAD_REQUEST,
                    parsed == -2 ? "Request Header Fields Too Large" : "Bad Request", 0);
         return;
     }
@@ -448,7 +521,7 @@ static void handle_client(socket_platform_socket_t client, const server_config_t
     line_end = strstr(request, "\r\n");
     if (line_end == NULL)
     {
-        send_error(client, 400u, "Bad Request", 0);
+        send_error(client, HTTP_STATUS_BAD_REQUEST, "Bad Request", 0);
         return;
     }
 
@@ -457,33 +530,33 @@ static void handle_client(socket_platform_socket_t client, const server_config_t
     if (parsed != 3 ||
         (strcmp(version, "HTTP/1.1") != 0 && strcmp(version, "HTTP/1.0") != 0))
     {
-        send_error(client, 400u, "Bad Request", 0);
+        send_error(client, HTTP_STATUS_BAD_REQUEST, "Bad Request", 0);
         return;
     }
 
     head_only = strcmp(method, "HEAD") == 0;
     if (strcmp(method, "GET") != 0 && !head_only)
     {
-        send_error(client, 405u, "Method Not Allowed", 0);
+        send_error(client, HTTP_STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed", 0);
         return;
     }
 
     if (decode_target(target, filename) != 0)
     {
-        send_error(client, 400u, "Bad Request", head_only);
+        send_error(client, HTTP_STATUS_BAD_REQUEST, "Bad Request", head_only);
         return;
     }
 
-    if (strcmp(filename, "index.html") == 0)
+    if (strcmp(filename, SERVER_INDEX_FILENAME) == 0)
     {
         /* Until Phase C creates an index, '/' opens the static manual. */
-        char candidate[4096];
-        int count = snprintf(candidate, sizeof(candidate), "%s/index.html", config->root);
+        char candidate[SERVER_FILESYSTEM_PATH_LIMIT];
+        int count = snprintf(candidate, sizeof(candidate), "%s/" SERVER_INDEX_FILENAME, config->root);
 
         if (count < 0 || (size_t)count >= sizeof(candidate) ||
             !is_safe_regular_file(candidate))
         {
-            (void)strcpy(filename, "c-static.7.html");
+            (void)strcpy(filename, SERVER_FALLBACK_FILENAME);
         }
     }
 
@@ -493,14 +566,28 @@ static void handle_client(socket_platform_socket_t client, const server_config_t
 }
 
 /**
- * @brief Explain the available command-line options.
+ * @brief Print command-line syntax and the configured default values.
+ * @param stream stdout for --help, stderr for invalid arguments.
+ * @param program Program name as passed through argv[0].
+ *
+ * Using an explicit stream keeps argument errors on stderr while normal
+ * informational output remains on stdout.
  */
-static void print_usage(const char* program)
+static void print_usage(FILE* stream, const char* program)
 {
-    printf("Usage: %s [--root DIRECTORY] [--port 1-65535]\n"
-           "Local-only C Manual Pages HTTP preview server.\n"
-           "Defaults: --root build/html --port 8000\n",
-           program);
+    /*
+     * Both the displayed defaults and actual configuration come from the
+     * same constants. Invalid input is explained on stderr; --help is sent
+     * to stdout so it behaves naturally in shell scripts.
+     */
+    (void)fprintf(stream,
+                  "Usage: %s [--root DIRECTORY] [--port 1-%u]\n"
+                  "Local-only C Manual Pages HTTP preview server.\n"
+                  "Defaults: --root %s --port %u\n",
+                  program,
+                  (unsigned int)UINT16_MAX,
+                  SERVER_DEFAULT_ROOT,
+                  SERVER_DEFAULT_PORT);
 }
 
 /**
@@ -515,7 +602,7 @@ int main(int argc, char* argv[])
 {
     server_config_t config =
     {
-        .root = "build/html",
+        .root = SERVER_DEFAULT_ROOT,
         .port = SERVER_DEFAULT_PORT
     };
     socket_platform_socket_t listener;
@@ -525,14 +612,18 @@ int main(int argc, char* argv[])
     {
         if (strcmp(argv[argument], "--help") == 0)
         {
-            print_usage(argv[0]);
+            print_usage(stdout, argv[0]);
             return EXIT_SUCCESS;
         }
-        if (strcmp(argv[argument], "--root") == 0 && argument + 1 < argc)
+
+        if (strcmp(argv[argument], "--root") == 0 &&
+            argument + 1 < argc                   &&
+            argv[argument + 1][0] != '\0')
         {
             config.root = argv[++argument];
             continue;
         }
+
         if (strcmp(argv[argument], "--port") == 0 && argument + 1 < argc &&
             parse_port(argv[argument + 1], &config.port) == 0)
         {
@@ -541,7 +632,7 @@ int main(int argc, char* argv[])
         }
 
         fprintf(stderr, "Invalid argument: %s\n", argv[argument]);
-        print_usage(argv[0]);
+        print_usage(stderr, argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -552,8 +643,10 @@ int main(int argc, char* argv[])
     }
 
 #ifndef _WIN32
-    /* Browsers can disconnect in the middle of a send. Ignoring SIGPIPE means
-     * send() reports EPIPE instead of abruptly killing the whole process. */
+    /*
+     * Browsers can disconnect in the middle of a send. Ignoring SIGPIPE means
+     * send() reports EPIPE instead of abruptly killing the whole process.
+     */
     (void)signal(SIGPIPE, SIG_IGN);
 #endif
 
@@ -577,24 +670,26 @@ int main(int argc, char* argv[])
     fflush(stdout);
 
 
-    for (;;)
+server_main_loop:
     {
         socket_platform_socket_t client = socket_platform_accept(listener);
 
         if (client == SOCKET_PLATFORM_INVALID)
         {
             if (socket_platform_was_interrupted())
-                continue;
+                goto server_main_loop;
 
             fprintf(stderr, "Accept failed (socket error %d).\n",
                     socket_platform_last_error());
-            break;
+            goto fail;
         }
 
         handle_client(client, &config);
         socket_platform_close(client);
+        goto server_main_loop;
     }
 
+fail:
     socket_platform_close(listener);
     socket_platform_shutdown();
     return EXIT_FAILURE;
