@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>${title} — C Manual Pages</title>
+${pygments_css}
+<style>
+${site_css}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header">
+    <div class="site-brand">C Manual Pages</div>
+    <span class="site-subtitle">A reference to the C language</span>
+</header>
+<div class="site-layout">
+    <aside class="site-sidebar" aria-label="On this page">
+        <div class="sidebar-sticky">
+            <div class="sidebar-heading">ON THIS PAGE</div>
+            <nav aria-label="Table of contents">
+                <ul class="toc-list">
+                    ${toc}
+                </ul>
+            </nav>
+        </div>
+    </aside>
+    <main id="main-content" class="site-content">
+        <div class="page-eyebrow">${category}</div>
+        <h1 class="page-title"><code>${page_name}</code></h1>
+        <p class="page-subtitle">${manual_name}</p>
+        <article class="manual-content">
+            ${body}
+        </article>
+        <footer class="page-footer">Generated from Markdown · C Manual Pages</footer>
+    </main>
+</div>
+</body>
+</html>

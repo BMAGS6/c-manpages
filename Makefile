@@ -1,7 +1,7 @@
 .POSIX:
 
 # C Manual Pages: first-stage build for c-static(7).
-# POSIX make syntax; lowdown and Pygments are build dependencies.
+# Portable make rules; lowdown, mandoc and Python/Pygments are build dependencies.
 
 LOWDOWN = lowdown
 MANDOC = mandoc
@@ -11,10 +11,14 @@ PYTHON = python3
 SOURCE = pages/keywords/static.md
 MANPAGE = build/man7/c-static.7
 HTMLPAGE = build/html/c-static.7.html
+MANDOC_HTML = build/html/c-static-mandoc.html
 HIGHLIGHTED_HTML = build/html/c-static-highlighted.html
+HTML_BUILDER = tools/build_html.py
 HIGHLIGHTER = tools/highlight_html.py
+HTML_TEMPLATE = templates/page.html
+SITE_CSS = assets/site.css
 
-.PHONY: all doctor man lint lint-strict check html html-highlighted view clean
+.PHONY: all doctor man lint lint-strict check html html-highlighted html-mandoc view clean
 
 all: $(MANPAGE)
 
@@ -32,19 +36,27 @@ lint-strict: $(MANPAGE)
 
 check: lint
 
+# Enhanced, standalone, syntax-highlighted HTML is the default HTML output.
 html: $(HTMLPAGE)
 
-$(HTMLPAGE): $(MANPAGE)
-	@mkdir -p build/html
-	$(MANDOC) -T html -O 'man=%N.%S.html' "$(MANPAGE)" > "$@.tmp" && mv "$@.tmp" "$@"
-
-html-highlighted: $(HIGHLIGHTED_HTML)
-
-$(HIGHLIGHTED_HTML): $(SOURCE) $(HIGHLIGHTER)
+$(HTMLPAGE): $(SOURCE) $(HTML_BUILDER) $(HIGHLIGHTER) $(HTML_TEMPLATE) $(SITE_CSS)
 	@mkdir -p build/html
 	$(LOWDOWN) -s -t html "$(SOURCE)" > "$@.raw.tmp"
-	$(PYTHON) "$(HIGHLIGHTER)" < "$@.raw.tmp" > "$@.tmp" && mv "$@.tmp" "$@"
+	$(PYTHON) "$(HTML_BUILDER)" --template "$(HTML_TEMPLATE)" --css "$(SITE_CSS)" < "$@.raw.tmp" > "$@.tmp" && mv "$@.tmp" "$@"
 	@rm -f "$@.raw.tmp"
+
+# Backwards-compatible output path from the earlier experimental build.
+html-highlighted: $(HIGHLIGHTED_HTML)
+
+$(HIGHLIGHTED_HTML): $(HTMLPAGE)
+	cp "$(HTMLPAGE)" "$(HIGHLIGHTED_HTML)"
+
+# Keep mandoc's plain HTML available for direct output comparisons.
+html-mandoc: $(MANDOC_HTML)
+
+$(MANDOC_HTML): $(MANPAGE)
+	@mkdir -p build/html
+	$(MANDOC) -T html -O 'man=%N.%S.html' "$(MANPAGE)" > "$@.tmp" && mv "$@.tmp" "$@"
 
 view: $(MANPAGE)
 	$(MAN) -l "$(MANPAGE)"
