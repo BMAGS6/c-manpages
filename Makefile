@@ -14,10 +14,28 @@ PYTHON = python3
 PAGE_BUILDER = tools/build_pages.py
 PAGE = c-static
 
+# Optional local preview server. CC is the native C compiler; choose a dialect
+# with CSTD=c17 (portable baseline) or CSTD=c23 (newer compilers). The standard
+# becomes part of the output path so different dialects do not collide.
+#
+# On MinGW/MSYS2 use EXE=.exe SERVER_LIBS=-lws2_32.  The server is entirely
+# optional: building and installing documentation does not require a compiler.
+# Set the native compiler explicitly. With .POSIX:, some make implementations
+# default CC to the C99-specific 'c99' driver, which rejects -std=c17/c23.
+CC = cc
+CSTD = c17
+SERVER_CFLAGS = -O2 -Wall -Wextra -Wpedantic -std=$(CSTD)
+SERVER_LIBS =
+EXE =
+SERVER_EXE = build/bin/$(CSTD)/c-manpages-serve$(EXE)
+SERVER_SOURCES = server/http_server.c server/socket_platform.c
+PORT = 8000
+BACKEND = c
+
 # Set these on the command line when needed, e.g. make view PAGE=c-static.
 BUILDER_OPTIONS = --lowdown "$(LOWDOWN)" --mandoc "$(MANDOC)" --man "$(MAN)"
 
-.PHONY: all doctor man lint lint-strict check html html-highlighted html-mandoc view list-pages test clean
+.PHONY: all doctor man lint lint-strict check html html-highlighted html-mandoc view list-pages test server serve clean
 
 all: man
 
@@ -67,6 +85,23 @@ doctor:
 		exit 1; \
 	}
 	@$(PYTHON) "$(PAGE_BUILDER)" list
+
+# Build a tiny C17+ localhost-only web server. Only this optional target
+# requires a native C compiler or Winsock link library.
+$(SERVER_EXE): $(SERVER_SOURCES) server/socket_platform.h
+	mkdir -p "build/bin/$(CSTD)"
+	$(CC) $(CPPFLAGS) $(SERVER_CFLAGS) $(CFLAGS) -o "$@" $(SERVER_SOURCES) $(LDFLAGS) $(SERVER_LIBS)
+
+server: $(SERVER_EXE)
+
+# Allow a familiar Python server as an opt-in alternative. This recipe runs the
+# HTTP server in the foreground; Ctrl+C stops it. The build remains POSIX make.
+serve: html
+	@case "$(BACKEND)" in \
+		c) $(MAKE) server && "./$(SERVER_EXE)" --root build/html --port "$(PORT)" ;; \
+		python) $(PYTHON) -m http.server "$(PORT)" --bind 127.0.0.1 --directory build/html ;; \
+		*) echo "Unknown BACKEND='$(BACKEND)' (choose c or python)" >&2; exit 1 ;; \
+	esac
 
 clean:
 	rm -rf build

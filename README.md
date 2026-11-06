@@ -105,3 +105,65 @@ linked page causes its referring pages to be revalidated. As before, run
 orphaned generated files.
 
 Site-wide navigation and a homepage are planned for the next milestone.
+
+## Preview the HTML using the optional C server
+
+Opening a single HTML page through `xdg-open` can put it behind the desktop's
+XDG document portal, causing links to neighboring HTML files to fail. Instead,
+the repository includes an intentionally tiny, **blocking**, local-only HTTP
+preview server written in ISO C17-compatible code. It uses no third-party
+HTTP library and works with POSIX sockets or Windows Winsock2.
+
+On a POSIX system, from the repository root:
+
+```sh
+make serve                         # Build HTML, compile C server, serve locally.
+make serve PORT=8080               # Pick another local port.
+make server CSTD=c23               # Compile the optional server as C23.
+make serve CSTD=c23 PORT=8080      # Use that version for the preview.
+make serve BACKEND=python          # Alternative: Python standard-library server.
+```
+
+Then open `http://127.0.0.1:8000/` (or the requested port). The server runs in
+that terminal; **Ctrl+C** stops it. Until the generated site has an `index.html`,
+the root URL opens `c-static.7.html`.
+
+The C standard is selected by the **compiler** using `-std=$(CSTD)`. Source
+`#if __STDC_VERSION__` checks permit optional newer-language code, but do not
+change a compiler's language mode. C17 is the lowest supported standard; C23
+is supported with a sufficiently recent compiler. An experimental C29 mode is
+not promised until compilers actually support one.
+
+### Windows (MinGW-w64 / MSYS2)
+
+Run from an MSYS2 UCRT64 or similar shell that provides `make`, GCC, Python,
+lowdown, and the project's normal HTML build dependencies:
+
+```sh
+make serve EXE=.exe SERVER_LIBS=-lws2_32
+```
+
+The server sources are also compatible with Winsock2 and can be compiled with
+an appropriate Windows C compiler. The POSIX make invocation is tested on
+POSIX; run the Windows recipe on Windows to validate your toolchain.
+
+### Resource use and security limits
+
+The server **does not periodically poll** for new requests. It blocks in the
+OS's `accept()` syscall when idle, and uses blocking `recv()` / `send()` with
+five-second socket timeouts for active clients. It is single-threaded, serves
+GET/HEAD only, sends `Connection: close`, and allocates no per-client worker
+threads. Memory usage is constant apart from C library/socket internals.
+
+It always binds **only to 127.0.0.1**. Paths must be single ASCII filenames:
+no directories, encoded URLs, `..` path components or directory listings are
+allowed. Symbolic links/reparse points and unknown file types are declined.
+The source directory is assumed to contain trusted, generated documentation.
+This is not a hardened server for use on untrusted networks or for hosting
+arbitrary third-party files; it does not implement TLS or concurrent clients.
+
+Test the server separately with:
+
+```sh
+python3 -m unittest discover -s tests -p 'test_http_server.py' -v
+```
