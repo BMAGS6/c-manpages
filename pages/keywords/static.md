@@ -1,6 +1,12 @@
-# `static` -- Keyword
+title: c-static
+section: 7
+source: C Manual Pages
 
-## Description
+# NAME
+
+c-static -- the static keyword and storage-class specifier in C
+
+# DESCRIPTION
 
 `static` is a keyword and storage-class specifier in C whose meaning depends on
 its context. It can give an identifier **internal linkage**, give an object
@@ -8,7 +14,7 @@ its context. It can give an identifier **internal linkage**, give an object
 literal**, or establish a **minimum accessible array size in a function
 parameter declaration**.
 
-## Overview
+# OVERVIEW
 
 In declarations -- and, since C23, in compound literals -- `static` acts as a
 **storage-class specifier**. Its effect depends on where it appears.
@@ -31,9 +37,9 @@ There, `static` specifies that the corresponding argument must provide access to
 the first element of an array containing **at least the specified number of
 elements**. It does **not** act as a storage-class specifier in that context.
 
-## Syntax
+# SYNTAX
 
-### File Scope
+## File Scope
 
 ```c
 /* Object with internal linkage and static storage duration. */
@@ -43,7 +49,7 @@ static int object = 1;
 static int foo(int x);
 ```
 
-### Block Scope
+## Block Scope
 
 ```c
 void example(void)
@@ -56,7 +62,7 @@ void example(void)
 }
 ```
 
-### Compound Literals
+## Compound Literals
 
 Since C23, `static` may be used as a storage-class specifier in a compound
 literal.
@@ -69,16 +75,16 @@ void example(void)
 }
 ```
 
-### Array Parameters
+## Array Parameters
 
 ```c
 /* The argument must provide access to at least 16 int elements. */
 int bar(int values[static 16]);
 ```
 
-## Semantics
+# SEMANTICS
 
-### File-Scope Declarations
+## File-Scope Declarations
 
 When `static` appears in the declaration of an object or function at file scope,
 the declared identifier has **internal linkage**. Declarations of that
@@ -114,7 +120,7 @@ When combined with `thread_local` (or `_Thread_local` in C11 and C17), `static`
 gives the file-scope identifier internal linkage, while the object has thread
 storage duration.
 
-### Block-Scope Objects
+## Block-Scope Objects
 
 When `static` appears in the declaration of an object at block scope, the object
 has **static storage duration**, unless `thread_local` is also specified. An
@@ -151,7 +157,7 @@ arbitrary runtime function call is not generally permitted.
 
 For more information, see `c-storage-duration(7)` and `c-initialization(7)`.
 
-### Compound Literals
+## Compound Literals
 
 Since C23, `static` may appear as a storage-class specifier in a compound
 literal. The resulting unnamed object has **static storage duration**.
@@ -176,7 +182,7 @@ Both _pointer variables_ in this example have automatic storage duration;
 `static` applies to the unnamed object designated by the second compound
 literal, not to `pointer_to_static` itself.
 
-### Array Parameters
+## Array Parameters
 
 When `static` appears between the brackets of an array parameter declarator, it
 specifies the minimum number of array elements to which the argument must
@@ -229,7 +235,7 @@ void process(size_t count, int values[static count]);
 For each call to `process`, `count` must be positive, and `values` must provide
 access to at least `count` elements.
 
-## Constraints
+# CONSTRAINTS
 
 - A function declaration using `static` as a storage-class specifier must appear
   at file scope. A block-scope function declaration cannot use it.
@@ -242,12 +248,12 @@ access to at least `count` elements.
   storage-class specifiers and the initialization of objects with static storage
   duration.
 
-## See Also
+# SEE ALSO
 
 `c-compound-literals(7)`, `c-initialization(7)`, `c-linkage(7)`, `c-scope(7)`,
 `c-storage-duration(7)`
 
-## Standards
+# STANDARDS
 
 The traditional declaration uses of `static` are specified by ANSI C89 and later
 C standards. The array-parameter use was introduced in C99, and the
@@ -255,15 +261,15 @@ compound-literal use in C23.
 
 Relevant clauses of ISO/IEC 9899:2024 (C23) include:
 
-- **6.2.2** -- Linkages of identifiers
-- **6.2.4** -- Storage durations of objects
+- **6.2.2**   -- Linkages of identifiers
+- **6.2.4**   -- Storage durations of objects
 - **6.5.3.6** -- Compound literals
-- **6.7.2** -- Storage-class specifiers
+- **6.7.2**   -- Storage-class specifiers
 - **6.7.7.3** -- Array declarators
 - **6.7.7.4** -- Function declarators
-- **6.7.11** -- Initialization
+- **6.7.11**  -- Initialization
 
-## History
+# HISTORY
 
 The concepts underlying `static` predate C. Earlier languages, including ALGOL
 60 and PL/I, supported forms of persistent storage. Ken Thompson's B language
@@ -306,7 +312,7 @@ subsequent extensions of `static`:
 - **2024 (C23):** Introduced the `thread_local` keyword spelling and permitted
   `static` in compound literals.
 
-## References
+# REFERENCES
 
 1. Ken Thompson, _Users' Reference to B_, Bell Laboratories, January 7, 1972.
    https://cm-bell-labs.github.io/who/dmr/kbman.html
