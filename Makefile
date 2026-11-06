@@ -1,68 +1,59 @@
 .POSIX:
 
-# C Manual Pages: first-stage build for c-static(7).
-# Portable make rules; lowdown, mandoc and Python/Pygments are build dependencies.
+# C Manual Pages -- POSIX make entry points for all Markdown documentation.
+#
+# POSIX make cannot recursively enumerate source files without nonportable
+# extensions. tools/build_pages.py handles discovery, collision detection,
+# per-file dependency freshness, and the existing converter invocations.
+# Targets here are intentionally phony; Python skips unchanged outputs.
 
 LOWDOWN = lowdown
 MANDOC = mandoc
 MAN = man
 PYTHON = python3
+PAGE_BUILDER = tools/build_pages.py
+PAGE = c-static
 
-SOURCE = pages/keywords/static.md
-MANPAGE = build/man7/c-static.7
-HTMLPAGE = build/html/c-static.7.html
-MANDOC_HTML = build/html/c-static-mandoc.html
-HIGHLIGHTED_HTML = build/html/c-static-highlighted.html
-HTML_BUILDER = tools/build_html.py
-HIGHLIGHTER = tools/highlight_html.py
-HTML_TEMPLATE = templates/page.html
-SITE_CSS = assets/site.css
+# Set these on the command line when needed, e.g. make view PAGE=c-static.
+BUILDER_OPTIONS = --lowdown "$(LOWDOWN)" --mandoc "$(MANDOC)" --man "$(MAN)"
 
-.PHONY: all doctor man lint lint-strict check html html-highlighted html-mandoc view clean
+.PHONY: all doctor man lint lint-strict check html html-highlighted html-mandoc view list-pages test clean
 
-all: $(MANPAGE)
+all: man
 
-man: $(MANPAGE)
+man:
+	$(PYTHON) "$(PAGE_BUILDER)" $(BUILDER_OPTIONS) man
 
-$(MANPAGE): $(SOURCE)
-	@mkdir -p build/man7
-	$(LOWDOWN) -s -t mdoc --roff-manpage "$(SOURCE)" > "$@.tmp" && mv "$@.tmp" "$@"
+html:
+	$(PYTHON) "$(PAGE_BUILDER)" $(BUILDER_OPTIONS) html
 
-lint: $(MANPAGE)
-	$(MANDOC) -W error -T utf8 "$(MANPAGE)" > /dev/null
+lint:
+	$(PYTHON) "$(PAGE_BUILDER)" $(BUILDER_OPTIONS) lint
 
-lint-strict: $(MANPAGE)
-	$(MANDOC) -T lint "$(MANPAGE)"
+lint-strict:
+	$(PYTHON) "$(PAGE_BUILDER)" $(BUILDER_OPTIONS) lint-strict
 
 check: lint
 
-# Enhanced, standalone, syntax-highlighted HTML is the default HTML output.
-html: $(HTMLPAGE)
+# Preserve optional output formats for comparison and regression checking.
+html-highlighted:
+	$(PYTHON) "$(PAGE_BUILDER)" $(BUILDER_OPTIONS) html-highlighted
 
-$(HTMLPAGE): $(SOURCE) $(HTML_BUILDER) $(HIGHLIGHTER) $(HTML_TEMPLATE) $(SITE_CSS)
-	@mkdir -p build/html
-	$(LOWDOWN) -s -t html "$(SOURCE)" > "$@.raw.tmp"
-	$(PYTHON) "$(HTML_BUILDER)" --template "$(HTML_TEMPLATE)" --css "$(SITE_CSS)" < "$@.raw.tmp" > "$@.tmp" && mv "$@.tmp" "$@"
-	@rm -f "$@.raw.tmp"
+html-mandoc:
+	$(PYTHON) "$(PAGE_BUILDER)" $(BUILDER_OPTIONS) html-mandoc
 
-# Backwards-compatible output path from the earlier experimental build.
-html-highlighted: $(HIGHLIGHTED_HTML)
+view:
+	$(PYTHON) "$(PAGE_BUILDER)" $(BUILDER_OPTIONS) --page "$(PAGE)" view
 
-$(HIGHLIGHTED_HTML): $(HTMLPAGE)
-	cp "$(HTMLPAGE)" "$(HIGHLIGHTED_HTML)"
+list-pages:
+	$(PYTHON) "$(PAGE_BUILDER)" list
 
-# Keep mandoc's plain HTML available for direct output comparisons.
-html-mandoc: $(MANDOC_HTML)
-
-$(MANDOC_HTML): $(MANPAGE)
-	@mkdir -p build/html
-	$(MANDOC) -T html -O 'man=%N.%S.html' "$(MANPAGE)" > "$@.tmp" && mv "$@.tmp" "$@"
-
-view: $(MANPAGE)
-	$(MAN) -l "$(MANPAGE)"
+# These tests need only Python's standard library and Pygments (for HTML).
+test:
+	$(PYTHON) -m unittest discover -s tests -v
 
 doctor:
-	@for tool in lowdown mandoc man python3; do \
+	@for tool in "$(LOWDOWN)" "$(MANDOC)" "$(MAN)" "$(PYTHON)"; do \
 		if command -v "$$tool" >/dev/null 2>&1; then \
 			printf '[OK] %s: %s\n' "$$tool" "$$(command -v "$$tool")"; \
 		else \
@@ -75,6 +66,7 @@ doctor:
 		printf '[MISSING] Pygments (Python module)\n' >&2; \
 		exit 1; \
 	}
+	@$(PYTHON) "$(PAGE_BUILDER)" list
 
 clean:
 	rm -rf build

@@ -1,4 +1,18 @@
-/* C Manual Pages: no external resources or JavaScript. */
+/*
+ * C Manual Pages -- presentation for self-contained, offline HTML manuals.
+ *
+ * Design constraints:
+ * - No JavaScript, web fonts, or external stylesheet requests.
+ * - Text stays readable in both light and dark operating-system themes.
+ * - Keyboard focus, reduced motion, and print output remain first-class.
+ * - This file defines presentation only; document structure and landmarks
+ *   belong to templates/page.html and tools/build_html.py.
+ *
+ * Colors are centralized below so theme variants remain synchronized.
+ * Whenever colors change, recheck foreground/background contrast.
+ */
+
+/* Theme tokens: default palette is light; dark mode overrides the tokens. */
 :root {
     color-scheme: light dark;
     --bg: #fcfcfd;
@@ -11,6 +25,7 @@
     --accent-hover: #0c407f;
     --selection: #dbe9ff;
 }
+/* Respect the reader's system theme without requiring a toggle or script. */
 @media (prefers-color-scheme: dark) {
     :root {
         --bg: #11151c;
@@ -24,6 +39,7 @@
         --selection: #29425e;
     }
 }
+/* Base sizing, typography, links, and keyboard focus indicators. */
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body {
@@ -38,6 +54,7 @@ body {
 a { color: var(--accent); text-underline-offset: .18em; }
 a:hover { color: var(--accent-hover); }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+/* Site chrome: header and persistent desktop table-of-contents sidebar. */
 .site-header {
     min-height: 64px;
     border-bottom: 1px solid var(--border);
@@ -62,6 +79,7 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .toc-list li a:hover, .toc-list li a:focus-visible { background: var(--surface); }
 .toc-level-2 { padding-left: 14px; }
 .toc-level-3 { padding-left: 27px; }
+/* Manual typography: readable measure, headings, examples, and tables. */
 .site-content { min-width: 0; width: min(100%, 990px); padding: 40px clamp(20px, 5vw, 84px) 60px; }
 .page-title { margin: 8px 0 0; font-size: clamp(2.25rem, 5vw, 3.2rem); letter-spacing: -.045em; line-height: 1.1; }
 .page-title code { font: inherit; }
@@ -85,8 +103,13 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .manual-content th { background: var(--surface); }
 .manual-content a[href^="http"] { overflow-wrap: anywhere; }
 .page-footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: .8rem; }
+/*
+ * Keyboard users can bypass the sidebar and jump directly to the article.
+ * Keep the link outside the viewport until it receives keyboard focus.
+ */
 .skip-link { position: absolute; top: -80px; left: 10px; z-index: 10; background: var(--bg); padding: 10px; }
 .skip-link:focus { top: 10px; }
+/* Narrow viewports place the page navigation above the manual text. */
 @media (max-width: 880px) {
     .site-layout { display: block; }
     .site-sidebar { border-right: 0; border-bottom: 1px solid var(--border); padding: 18px 24px 8px; }
@@ -95,9 +118,11 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
     .toc-list li { padding-left: 0; }
     .site-content { width: 100%; padding: 32px 24px 60px; }
 }
+/* Smooth scrolling is decorative; honor users who request less motion. */
 @media (prefers-reduced-motion: reduce) {
     html { scroll-behavior: auto; }
 }
+/* Print the reference text without consuming paper on sidebar chrome. */
 @media print {
     :root { color-scheme: light; --bg: #fff; --text: #000; --muted: #555; --border: #aaa; }
     .site-sidebar, .skip-link, .site-subtitle { display: none; }
