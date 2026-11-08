@@ -30,7 +30,13 @@ EXE =
 SERVER_EXE = build/bin/$(CSTD)/c-manpages-serve$(EXE)
 SERVER_SOURCES = server/http_server.c server/http_parser.c server/file_platform.c server/socket_platform.c
 PORT = 8000
+# `make html` is entirely server-independent. `make serve` is only a local
+# preview convenience; the built-in C binary is compiled only for BACKEND=c.
+# Choose BACKEND=python for the standard-library server or BACKEND=external
+# and supply the complete invocation yourself through SERVER_COMMAND.
+# External commands must serve build/html and configure their own bind/port.
 BACKEND = c
+SERVER_COMMAND =
 
 # Set these on the command line when needed, e.g. make view PAGE=c-static.
 BUILDER_OPTIONS = --lowdown "$(LOWDOWN)" --mandoc "$(MANDOC)" --man "$(MAN)"
@@ -100,13 +106,21 @@ $(SERVER_EXE): $(SERVER_SOURCES) server/socket_platform.h server/http_parser.h s
 
 server: $(SERVER_EXE)
 
-# Allow a familiar Python server as an opt-in alternative. This recipe runs the
-# HTTP server in the foreground; Ctrl+C stops it. The build remains POSIX make.
+# Preview with the optional native C server, Python, or any user-selected
+# external server. All choices use the same generated static HTML; only the
+# explicit `serve` target starts a process. External commands are supplied by
+# the caller and run in the foreground from the repository root.
 serve: html
 	@case "$(BACKEND)" in \
 		c) $(MAKE) server && "./$(SERVER_EXE)" --root build/html --port "$(PORT)" ;; \
 		python) $(PYTHON) -m http.server "$(PORT)" --bind 127.0.0.1 --directory build/html ;; \
-		*) echo "Unknown BACKEND='$(BACKEND)' (choose c or python)" >&2; exit 1 ;; \
+		external) \
+			if test -z "$(SERVER_COMMAND)"; then \
+				printf '%s\n' 'BACKEND=external requires SERVER_COMMAND (serving build/html).' >&2; \
+				exit 2; \
+			fi; \
+			$(SERVER_COMMAND) ;; \
+		*) printf '%s\n' "Unknown BACKEND='$(BACKEND)' (choose c, python, or external)." >&2; exit 2 ;; \
 	esac
 
 clean:

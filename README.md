@@ -106,29 +106,64 @@ orphaned generated files.
 
 Site-wide navigation and a homepage are planned for the next milestone.
 
-## Preview the HTML using the optional C server
+## Serve the generated HTML with any HTTP server
 
-Opening a single HTML page through `xdg-open` can put it behind the desktop's
-XDG document portal, causing links to neighboring HTML files to fail. Instead,
-the repository includes an intentionally tiny, **blocking**, local-only HTTP
-preview server written in ISO C99-compatible code. It uses no third-party
-HTTP library and works with POSIX sockets or Windows Winsock2.
+**The documentation is plain static HTML, independent of the preview server.**
+`make`, `make check`, and `make html` do **not** compile or run the bundled C
+server. The native server is only an optional development convenience, and
+it is not needed to host the generated site.
 
-On a POSIX system, from the repository root:
+Build the HTML first:
 
 ```sh
-make serve                         # Build HTML, compile C server, serve locally.
-make serve PORT=8080               # Pick another local port.
-make server CSTD=c99               # Compile the optional server as C99 (default).
-make server CSTD=c17               # Compile the optional server as C17.
-make server CSTD=c23               # Compile the optional server as C23.
-make serve CSTD=c23 PORT=8080      # Use that version for the preview.
-make serve BACKEND=python          # Alternative: Python standard-library server.
+make html
 ```
 
-Then open `http://127.0.0.1:8000/` (or the requested port). The server runs in
-that terminal; **Ctrl+C** stops it. Until the generated site has an `index.html`,
-the root URL opens `c-static.7.html`.
+Then point **any** static-file HTTP server at `build/html/`. This includes
+nginx, Apache httpd, Caddy, Python's `http.server`, and other implementations.
+You may also copy the contents of `build/html/` to a static hosting provider.
+No Python-based *web server* or C compiler is needed for hosting (although
+Python remains part of the current **HTML build** process).
+
+Opening an HTML file directly with `xdg-open` can involve the XDG document
+portal, which sometimes prevents a browser from resolving neighboring files.
+A local HTTP server avoids that issue.
+
+### Optional preview commands
+
+The Makefile offers several convenience modes on POSIX systems:
+
+```sh
+make serve                          # Build HTML and run the bundled C server.
+make serve PORT=8080                # Select its listening port.
+make serve BACKEND=python           # Use Python's standard-library server.
+make serve BACKEND=external \
+    SERVER_COMMAND='busybox httpd -f -p 127.0.0.1:8000 -h build/html'
+```
+
+The BusyBox command is merely an **example**; it requires BusyBox to be
+installed. Any other command is acceptable if it serves `build/html/`.
+`SERVER_COMMAND` is a trusted, user-supplied shell command executed from the
+repository root; the Makefile does not interpret or append `PORT` to it.
+Configure the address, port, and document root using your chosen server's
+own arguments. Bind to `127.0.0.1` for local preview unless you deliberately
+intend to expose the site on a network.
+
+The `serve` target is only a shortcut. You can bypass it entirely:
+
+```sh
+make html
+python3 -m http.server 8000 --bind 127.0.0.1 --directory build/html
+```
+
+Preview processes run in the foreground; **Ctrl+C** stops them. Until Phase C
+generates `index.html`, the bundled C server maps `/` to `c-static.7.html`.
+Other HTTP servers may list the directory or return 404 at `/`; in that case,
+visit `http://127.0.0.1:8000/c-static.7.html` explicitly.
+
+The bundled native server is intentionally tiny, single-threaded, blocking,
+and limited to local development. It does not implement a general-purpose web
+server, and no documentation output depends on its particular behavior.
 
 The C standard is selected by the **compiler** using `-std=$(CSTD)`. Source
 `#if __STDC_VERSION__` checks permit optional newer-language code, but do not
