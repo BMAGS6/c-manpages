@@ -28,14 +28,14 @@ SERVER_CFLAGS = -O2 -Wall -Wextra -Wpedantic -std=$(CSTD)
 SERVER_LIBS =
 EXE =
 SERVER_EXE = build/bin/$(CSTD)/c-manpages-serve$(EXE)
-SERVER_SOURCES = server/http_server.c server/socket_platform.c
+SERVER_SOURCES = server/http_server.c server/http_parser.c server/file_platform.c server/socket_platform.c
 PORT = 8000
 BACKEND = c
 
 # Set these on the command line when needed, e.g. make view PAGE=c-static.
 BUILDER_OPTIONS = --lowdown "$(LOWDOWN)" --mandoc "$(MANDOC)" --man "$(MAN)"
 
-.PHONY: all doctor man lint lint-strict check html html-highlighted html-mandoc view list-pages test server serve clean
+.PHONY: all doctor man lint lint-strict check html html-highlighted html-mandoc view list-pages test test-server-sanitize server serve clean
 
 all: man
 
@@ -70,6 +70,12 @@ list-pages:
 test:
 	$(PYTHON) -m unittest discover -s tests -v
 
+# Optional GCC/Clang debugging run: compile both the pure parser and the
+# running server under AddressSanitizer + UndefinedBehaviorSanitizer. This is
+# intentionally opt-in because sanitizer runtimes are compiler-dependent.
+test-server-sanitize:
+	SERVER_TEST_SANITIZE=1 $(PYTHON) -m unittest discover -s tests -p 'test_http_*.py' -v
+
 doctor:
 	@for tool in "$(LOWDOWN)" "$(MANDOC)" "$(MAN)" "$(PYTHON)"; do \
 		if command -v "$$tool" >/dev/null 2>&1; then \
@@ -88,7 +94,7 @@ doctor:
 
 # Build a tiny C99+ localhost-only web server. Only this optional target
 # requires a native C compiler or Winsock link library.
-$(SERVER_EXE): $(SERVER_SOURCES) server/socket_platform.h
+$(SERVER_EXE): $(SERVER_SOURCES) server/socket_platform.h server/http_parser.h server/file_platform.h
 	mkdir -p "build/bin/$(CSTD)"
 	$(CC) $(CPPFLAGS) $(SERVER_CFLAGS) $(CFLAGS) -o "$@" $(SERVER_SOURCES) $(LDFLAGS) $(SERVER_LIBS)
 

@@ -21,7 +21,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCES = [ROOT / "server/http_server.c", ROOT / "server/socket_platform.c"]
+SOURCES = [ROOT / "server/http_server.c", ROOT / "server/http_parser.c",
+           ROOT / "server/file_platform.c", ROOT / "server/socket_platform.c"]
 
 
 class NativeServerTests(unittest.TestCase):
@@ -50,11 +51,15 @@ class NativeServerTests(unittest.TestCase):
             "-Wall",
             "-Wextra",
             "-Wpedantic",
+            "-Werror",
             "-O2",
             "-o",
             str(cls.executable),
             *map(str, SOURCES),
         ]
+        if os.environ.get("SERVER_TEST_SANITIZE") == "1" and os.name != "nt":
+            # Instrument the *live* server, not only the standalone parser.
+            command.extend(["-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-g"])
         if os.name == "nt":
             command.append("-lws2_32")
 
@@ -112,6 +117,7 @@ class NativeServerTests(unittest.TestCase):
         with socket.create_connection(("127.0.0.1", cls.port), timeout=2) as client:
             client.settimeout(3)
             client.sendall(request)
+            client.shutdown(socket.SHUT_WR)  # Explicit EOF for intentionally incomplete requests.
             while True:
                 chunk = client.recv(4096)
                 if not chunk:
@@ -256,9 +262,151 @@ class NativeServerTests(unittest.TestCase):
         # Fill the exact accepted buffer without placing additional unread
         # bytes in the TCP receive queue. Closing with excess unread bytes can
         # trigger a TCP reset and obscure the error response on some kernels.
-        request = prefix + b"x" * (8191 - len(prefix))
+        request = prefix + b"x" * (8192 - len(prefix))
         header, _ = self.request(request)
         self.assertIn(b"431 Request Header Fields Too Large", header)
+
+    def test_missing_or_duplicate_host_rejected(self):
+        """HTTP/1.1 Host is mandatory and must occur exactly once (RFC 9112)."""
+        requests = (
+            b"GET /c-static.7.html HTTP/1.1\r\n\r\n",
+            b"GET /c-static.7.html HTTP/1.1\r\nHost: x\r\nHost: y\r\n\r\n",
+            b"GET /c-static.7.html HTTP/1.1\r\nHost: x,y\r\n\r\n",
+            b"GET /c-static.7.html HTTP/1.1\r\nHost: user@host\r\n\r\n",
+        )
+        for request in requests:
+            with self.subTest(request=request):
+                header, _ = self.request(request)
+                self.assertIn(b"400 Bad Request", header)
+
+    def test_http_10_does_not_require_host(self):
+        """Retain a useful, small HTTP/1.0 compatibility subset."""
+        header, body = self.request(b"GET /c-static.7.html HTTP/1.0\r\n\r\n")
+        self.assertIn(b"200 OK", header)
+        self.assertEqual(body, b"<h1>static</h1>\n")
+
+    def test_case_insensitive_header_names(self):
+        """Header field names are ASCII case insensitive, unlike methods."""
+        header, body = self.request(b"GET /c-static.7.html HTTP/1.1\r\nhOsT: localhost\r\n\r\n")
+        self.assertIn(b"200 OK", header)
+        self.assertEqual(body, b"<h1>static</h1>\n")
+
+    def test_malformed_request_lines(self):
+        """Reject line whitespace ambiguities, bad methods and versions."""
+        requests = (
+            b" GET / HTTP/1.1\r\nHost: x\r\n\r\n",
+            b"GET  / HTTP/1.1\r\nHost: x\r\n\r\n",
+            b"GET / HTTP/1.1  \r\nHost: x\r\n\r\n",
+            b"GET / HTTP/9.9\r\nHost: x\r\n\r\n",
+            b"get / HTTP/1.1\r\nHost: x\r\n\r\n",
+            b"GET / HTTP/1.1\nHost: x\n\n",
+            b"GET / HTTP/1.1\x00\r\nHost: x\r\n\r\n",
+        )
+        for request in requests:
+            with self.subTest(request=request):
+                header, _ = self.request(request)
+                # A syntactically well-formed unsupported lowercase method is 405.
+                expected = b"405 Method Not Allowed" if request.startswith(b"get") else b"400 Bad Request"
+                self.assertIn(expected, header)
+
+    def test_header_field_syntax_and_folding(self):
+        """Reject obsolete folding, whitespace before colon and control bytes."""
+        bad_lines = (
+            b" Host: localhost",
+            b"Host : localhost",
+            b"Host: localhost\r\n\tmore",
+            b"X-Invalid: hello\x00world",
+            b"X-Invalid: hello\x01world",
+            b"invalid header without a colon",
+        )
+        for bad in bad_lines:
+            with self.subTest(header=bad):
+                request = b"GET / HTTP/1.1\r\n" + bad + b"\r\nHost: localhost\r\n\r\n"
+                header, _ = self.request(request)
+                self.assertIn(b"400 Bad Request", header)
+
+    def test_request_body_framing_is_explicitly_unsupported(self):
+        """Our single-request server refuses request-body framing, not just POST."""
+        for extra in (b"Content-Length: 0", b"Content-Length: 12", b"Transfer-Encoding: chunked"):
+            with self.subTest(extra=extra):
+                request = b"GET / HTTP/1.1\r\nHost: x\r\n" + extra + b"\r\n\r\n"
+                header, _ = self.request(request)
+                self.assertIn(b"400 Bad Request", header)
+
+    def test_missing_root_is_an_immediate_startup_error(self):
+        """A server with an invalid document root must not bind and serve 404."""
+        nonexistent = self.root / "there-is-no-directory"
+        result = subprocess.run(
+            [str(self.executable), "--root", str(nonexistent), "--port", "8000"],
+            capture_output=True, text=True, timeout=3,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Cannot open document root", result.stderr)
+
+    def test_fifo_and_directory_not_served(self):
+        """A regular-file requirement prevents opening devices or blocking on FIFO."""
+        directory = self.public / "bad.html"
+        directory.mkdir()
+        try:
+            header, _ = self.request(b"GET /bad.html HTTP/1.1\r\nHost: x\r\n\r\n")
+            self.assertIn(b"404 Not Found", header)
+        finally:
+            directory.rmdir()
+
+        if hasattr(os, "mkfifo"):
+            fifo = self.public / "fifo.html"
+            os.mkfifo(fifo)
+            try:
+                header, _ = self.request(b"GET /fifo.html HTTP/1.1\r\nHost: x\r\n\r\n")
+                self.assertIn(b"404 Not Found", header)
+            finally:
+                fifo.unlink()
+
+    def test_large_file_is_streamed_without_truncation(self):
+        """An 80 KiB response exercises multi-read, multi-send and length accounting."""
+        fixture = self.public / "large.html"
+        payload = b"abc12345" * 10000
+        fixture.write_bytes(payload)
+        try:
+            header, body = self.request(b"GET /large.html HTTP/1.1\r\nHost: x\r\n\r\n")
+            self.assertIn(b"200 OK", header)
+            self.assertIn(b"Content-Length: 80000", header)
+            self.assertEqual(body, payload)
+        finally:
+            fixture.unlink()
+
+    def test_explicit_index_does_not_fall_back(self):
+        """Only the root '/' should fall back to the first generated manual."""
+        header, _ = self.request(b"GET /index.html HTTP/1.1\r\nHost: x\r\n\r\n")
+        self.assertIn(b"404 Not Found", header)
+
+    def test_slow_trickling_client_expires_at_total_deadline(self):
+        """A client cannot occupy one worker indefinitely by feeding bytes slowly."""
+        started = time.monotonic()
+        with socket.create_connection(("127.0.0.1", self.port), timeout=2) as client:
+            client.settimeout(7)
+            # Send enough to begin the request, then drip bytes without ending it.
+            client.sendall(b"GET / HTTP/1.1\r\nX-Slow: ")
+            deadline = started + 6.5
+            data = bytearray()
+            while time.monotonic() < deadline:
+                try:
+                    client.sendall(b"x")
+                except OSError:
+                    break
+                try:
+                    client.settimeout(0.8)
+                    chunk = client.recv(4096)
+                    if chunk:
+                        data.extend(chunk)
+                        if b"408 Request Timeout" in data:
+                            break
+                except socket.timeout:
+                    pass
+            self.assertIn(b"408 Request Timeout", data)
+            self.assertLess(time.monotonic() - started, 6.5)
+        header, _ = self.request(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+        self.assertIn(b"200 OK", header)
 
 
 if __name__ == "__main__":

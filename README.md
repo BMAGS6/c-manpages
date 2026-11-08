@@ -153,30 +153,100 @@ The server sources are also compatible with Winsock2 and can be compiled with
 an appropriate Windows C compiler. The POSIX make invocation is tested on
 POSIX; run the Windows recipe on Windows to validate your toolchain.
 
-### Resource use and security limits
+### Resource use and protocol boundaries
 
-The server **does not periodically poll** for new requests. It blocks in the
-OS's `accept()` syscall when idle, and uses blocking `recv()` / `send()` with
-five-second socket timeouts for active clients. It is single-threaded, serves
-GET/HEAD only, sends `Connection: close`, and allocates no per-client worker
-threads. Memory usage is constant apart from C library/socket internals.
+The native server uses **blocking** sockets. The OS puts the process to sleep
+inside `accept()` when no browser is connecting; there is **no busy-waiting**,
+thread pool, or periodic timer. Active connections have 5-second socket I/O
+timeouts, plus an independent **5-second total deadline for receiving the HTTP
+request headers**. The latter prevents a client from keeping the single worker
+occupied indefinitely by transmitting a byte before each socket timeout.
+A monotonic clock is used so changing the system clock cannot extend this
+header deadline. File response sends remain bounded *per socket operation*;
+a full-response deadline and concurrency are not part of this small server.
 
-It always binds **only to 127.0.0.1**. Paths must be single ASCII filenames:
-no directories, encoded URLs, `..` path components or directory listings are
-allowed. Symbolic links/reparse points and unknown file types are declined.
-The source directory is assumed to contain trusted, generated documentation.
-This is not a hardened server for use on untrusted networks or for hosting
-arbitrary third-party files; it does not implement TLS or concurrent clients.
+Supported requests are deliberately narrower than a general HTTP daemon:
 
-The server uses named configuration constants for HTTP status codes,
-resource limits, the default preview directory, the listener backlog, and
-socket timeouts. To avoid surprising behavior, the `--port` argument accepts
-**decimal digits only**, in the range 1–65535: no whitespace, signs, or
-trailing characters. Invalid arguments print usage to stderr, without starting
-a network listener.
+- HTTP/1.0 or HTTP/1.1, **GET and HEAD only**, one request per connection.
+- HTTP/1.1 requires exactly one syntactically valid `Host` field; HTTP header
+  field names are case-insensitive. Extra whitespace in the request line,
+  obsolete folded headers, NULs and other invalid control bytes are rejected.
+- Request-body framing (`Content-Length`, `Transfer-Encoding`) is rejected,
+  including on GET. The server neither parses uploads nor handles pipelining.
+- Only *origin-form* paths, a **single ASCII filename**, and optional query
+  strings are accepted; percent escapes and directory separators are rejected.
+  The server is not an RFC-complete HTTP implementation or a reverse proxy.
+- The root URL `/` prefers `index.html` and falls back to `c-static.7.html`
+  until the site index exists. An explicit `/index.html` request does not fall
+  back. Missing files return 404, unsupported file extensions return 403.
 
-Test the server separately with:
+These rules follow a strict subset of the HTTP/1.1 message syntax described
+by [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html). The fixed request
+buffer is 8 KiB. A request exceeding it produces HTTP 431; an incomplete
+request or malformed header produces HTTP 400, and an expired receive deadline
+produces HTTP 408. The standard permits some tolerance for legacy whitespace;
+this developer-only implementation intentionally rejects it instead.
+
+### Filesystem and error handling
+
+The document root is validated **before** the TCP listener starts. It must
+exist and be a real, accessible directory. File names are checked before any
+file lookup. Only known MIME extensions and ordinary files can be served.
+Symbolic links/reparse points, directories, named pipes, and other special
+files are not served.
+
+The file is opened once, then its metadata and bytes are read using the **same
+handle**, removing the previous time-of-check/time-of-use gap for the leaf
+file. On POSIX, the server holds an open root directory descriptor and uses
+`openat()` with `O_NOFOLLOW`, `O_NONBLOCK`, and `fstat()`. On Windows it uses
+`CreateFileA()` with `FILE_FLAG_OPEN_REPARSE_POINT`, validates the opened
+handle, and reads from that handle. The document root remains trusted: users
+who can replace or modify its contents (or rearrange the Windows root path)
+should not be considered adversaries. Windows `CreateFileA` uses the Windows
+ANSI code page, so a non-ASCII custom root path is not yet supported reliably.
+
+File size is captured before response headers are sent. The first read is
+attempted before sending HTTP 200; subsequent reads and sends are checked for
+errors or truncation. Since status headers cannot be recalled after sending,
+logs distinguish the **HTTP status** from an **incomplete transfer**. The
+POSIX and Winsock adapters save errors before socket cleanup so original
+failure diagnostics are not replaced by errors from `close()`.
+
+This is a **localhost-only preview utility**, not a hardened internet server.
+It always binds to `127.0.0.1`. It does not provide TLS, authentication,
+CGI, uploads, HTTP/2, HTTP/3, persistent connections, or public access.
+
+### Testing the native server
+
+`make test` also runs the C99 HTTP parser mutation harness and an optional
+GCC/Clang matrix for C99, C11, C17 and C23 (when the installed toolchain
+understands those language switches). The live socket tests cover normal GET
+and HEAD, malformed requests, duplicate or missing Host, traversal attempts,
+symlinks, directories and FIFOs, large files, and slow clients.
 
 ```sh
-python3 -m unittest discover -s tests -p 'test_http_server.py' -v
+make test
+make -B server CSTD=c99 CFLAGS='-O2 -Wall -Wextra -Wpedantic -Werror'
+make server CSTD=c23
+make test-server-sanitize   # Optional: GCC/Clang with ASan + UBSan on POSIX.
 ```
+
+The sanitizer target is opt-in and requires a compatible compiler and its
+sanitizer runtime. Compiler flags are not tracked as Make dependencies, hence
+`-B` is necessary to force a new binary when only `CFLAGS` changes.
+
+Windows builds are supported by the source's Winsock and Win32 branches, but
+must be **compiled and exercised on Windows** before claiming Windows
+integration verification. The provided test suite uses MinGW-w64/GCC-style
+flags. MSVC requires its own C11/C17 build command and does not accept
+`-std=c99`. For Windows with MinGW-w64:
+
+```sh
+make server CSTD=c99 EXE=.exe SERVER_LIBS=-lws2_32
+make test
+```
+
+For further development, fuzzing the isolated `http_parser.c` implementation,
+Windows CI, transfer-deadline tests, and measuring idle CPU/latency under real
+browser workloads are sensible next steps. They are not prerequisites for
+using the preview server today.

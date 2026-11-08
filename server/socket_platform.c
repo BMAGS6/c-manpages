@@ -20,6 +20,7 @@
     #include <errno.h>
     #include <sys/socket.h>
     #include <sys/time.h>
+    #include <time.h>
     #include <netinet/in.h>
     #include <unistd.h>
 #endif
@@ -59,13 +60,55 @@ int socket_platform_last_error(void)
 #endif
 }
 
-int socket_platform_was_interrupted(void)
+int socket_platform_is_interrupted(int error_code)
 {
 #ifdef _WIN32
-    return socket_platform_last_error() == WSAEINTR;
+    return error_code == WSAEINTR;
 #else
-    return socket_platform_last_error() == EINTR;
+    return error_code == EINTR;
 #endif
+}
+
+int socket_platform_is_timeout(int error_code)
+{
+#ifdef _WIN32
+    return error_code == WSAETIMEDOUT || error_code == WSAEWOULDBLOCK;
+#else
+    return error_code == EAGAIN || error_code == EWOULDBLOCK || error_code == ETIMEDOUT;
+#endif
+}
+
+/**
+ * @brief Restore an error saved before cleaning up an unsuccessful operation.
+ *
+ * closesocket()/close() may change the last-error value. Reinstating the
+ * original code makes diagnostics from the caller identify the real failure.
+ */
+static void restore_socket_error(int error_code)
+{
+#ifdef _WIN32
+    WSASetLastError(error_code);
+#else
+    errno = error_code;
+#endif
+}
+
+int socket_platform_monotonic_ms(uint64_t* milliseconds)
+{
+    if (milliseconds == NULL)
+        return -1;
+#ifdef _WIN32
+    *milliseconds = (uint64_t)GetTickCount64();
+#else
+    {
+        struct timespec now;
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
+            return -1;
+        *milliseconds = (uint64_t)now.tv_sec * 1000u +
+                        (uint64_t)now.tv_nsec / 1000000u;
+    }
+#endif
+    return 0;
 }
 
 void socket_platform_close(socket_platform_socket_t socket)
@@ -103,7 +146,9 @@ socket_platform_socket_t socket_platform_listen(uint16_t port)
                        (const char*)&exclusive,
                        (int)sizeof(exclusive)) != 0)
         {
+            int error_code = socket_platform_last_error();
             socket_platform_close(listener);
+            restore_socket_error(error_code);
             return SOCKET_PLATFORM_INVALID;
         }
     }
@@ -113,7 +158,9 @@ socket_platform_socket_t socket_platform_listen(uint16_t port)
 
         if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) != 0)
         {
+            int error_code = socket_platform_last_error();
             socket_platform_close(listener);
+            restore_socket_error(error_code);
             return SOCKET_PLATFORM_INVALID;
         }
     }
@@ -126,7 +173,9 @@ socket_platform_socket_t socket_platform_listen(uint16_t port)
     if (bind(listener, (const struct sockaddr*)&address, sizeof(address)) != 0 ||
         listen(listener, SOCKET_PLATFORM_LISTEN_BACKLOG) != 0)
     {
+        int error_code = socket_platform_last_error();
         socket_platform_close(listener);
+        restore_socket_error(error_code);
         return SOCKET_PLATFORM_INVALID;
     }
 
@@ -138,29 +187,46 @@ socket_platform_socket_t socket_platform_accept(socket_platform_socket_t listene
     return accept(listener, NULL, NULL);
 }
 
-int socket_platform_set_timeouts(socket_platform_socket_t client, unsigned int seconds)
+/**
+ * @brief Configure one timeout without allowing zero (which means "forever").
+ *
+ * POSIX SO_*TIMEO uses timeval while Winsock expects milliseconds as DWORD.
+ * The unsigned millisecond interface is intentionally narrow: a preview
+ * connection has only short waits, never days-long values.
+ */
+static int set_timeout(socket_platform_socket_t client, int option, unsigned int ms)
 {
-#ifdef _WIN32
-    /* Winsock uses a DWORD millisecond timeout for SO_RCVTIMEO/SO_SNDTIMEO. */
-    DWORD milliseconds = (DWORD)seconds * SOCKET_PLATFORM_MILLISECONDS_PER_SECOND;
-    const char* value  = (const char*)&milliseconds;
-    int length         = (int)sizeof(milliseconds);
-#else
-    /* POSIX sockets use a timeval, not the Winsock millisecond integer. */
-    struct timeval timeout = {0};
-    timeout.tv_sec         = (time_t)seconds;
-    timeout.tv_usec        = 0;
-    const void* value      = &timeout;
-    socklen_t length       = (socklen_t)sizeof(timeout);
-#endif
-
-    if (setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, value, length) != 0 ||
-        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, value, length) != 0)
-    {
+    if (ms == 0u)
         return -1;
+#ifdef _WIN32
+    {
+        DWORD timeout = (DWORD)ms;
+        return setsockopt(client, SOL_SOCKET, option,
+                          (const char*)&timeout, (int)sizeof(timeout));
     }
+#else
+    {
+        struct timeval timeout;
+        timeout.tv_sec = (time_t)(ms / SOCKET_PLATFORM_MILLISECONDS_PER_SECOND);
+        timeout.tv_usec = (suseconds_t)((ms % SOCKET_PLATFORM_MILLISECONDS_PER_SECOND) * 1000u);
+        return setsockopt(client, SOL_SOCKET, option, &timeout, (socklen_t)sizeof(timeout));
+    }
+#endif
+}
 
-    return 0;
+int socket_platform_set_receive_timeout(socket_platform_socket_t client,
+                                        unsigned int milliseconds)
+{
+    return set_timeout(client, SO_RCVTIMEO, milliseconds);
+}
+
+int socket_platform_set_timeouts(socket_platform_socket_t client,
+                                 unsigned int receive_ms,
+                                 unsigned int send_ms)
+{
+    if (socket_platform_set_receive_timeout(client, receive_ms) != 0)
+        return -1;
+    return set_timeout(client, SO_SNDTIMEO, send_ms);
 }
 
 int socket_platform_receive(socket_platform_socket_t client, void* buffer, int count)

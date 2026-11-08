@@ -1,51 +1,40 @@
 /**
  * @file http_server.c
- * @brief Small, single-threaded HTTP/1.1 preview server for C Manual Pages.
+ * @brief Small, single-threaded, read-only HTTP documentation preview server.
  *
- * Design goals
- * ------------
- * 1. Serve only generated, flat files from a trusted build/html directory.
- * 2. Bind to IPv4 loopback (127.0.0.1), never to every network interface.
- * 3. Sleep inside blocking accept() while no browser is connected.
- * 4. Serve one GET or HEAD request per connection, then close that connection.
- * 5. Reject URL encoding, path separators and nonportable filenames rather
- *    than attempting complex, error-prone path normalization.
- * 6. Use a fixed request buffer, fixed file buffer and bounded socket waits.
- * 7. Require C99, while also supporting newer C language modes where available.
+ * Design contract
+ * ---------------
+ * - Bind to IPv4 loopback only: no remote service, TLS, CGI, or uploads.
+ * - Sleep in blocking accept() while idle; never spin or poll unnecessarily.
+ * - Handle one HTTP/1.0 or HTTP/1.1 GET/HEAD request per TCP connection.
+ * - Parse raw bytes strictly before interpreting any request field as text.
+ * - Accept only flat, ASCII filenames from an author-controlled output root.
+ * - Open the actual file handle without following symbolic/reparse links.
+ * - Bound header size, total header-receive time, and individual socket I/O.
+ * - Report HTTP status separately from whether the transfer completed.
+ * - Remain valid ISO C99 while isolating POSIX and Windows calls in adapters.
  *
- * This is a *development preview utility*, not a general-purpose production
- * HTTP daemon. In particular it has no TLS, authentication, persistent
- * connections, concurrency, reverse-proxy support or directory listings.
- *
- * The generated documentation currently uses flat c-*.7.html filenames and
- * embeds its stylesheet, making flat-file-only serving sufficient. The future
- * site-wide index.html will work without changing the server.
+ * This is purpose-built for browsing generated, trusted C reference pages.
+ * It is not an internet-facing or multi-user HTTP server.
  */
 #ifndef _WIN32
-    /* Expose lstat() in strict ISO C99 and newer compiler modes. */
+    /* POSIX signals and socket implementations need feature-test macros. */
     #define _POSIX_C_SOURCE 200809L
 #endif
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <limits.h>
 #include <errno.h>
+#include <inttypes.h>
+#include <limits.h>
 #include <signal.h>
 #include <string.h>
-#include <sys/stat.h>
 
-#ifdef _WIN32
-    #include <windows.h>
-#endif
-
+#include "file_platform.h"
+#include "http_parser.h"
 #include "socket_platform.h"
 
-/*
- * C99 is our portable language baseline. The selected compiler dialect—not
- * these tests—determines which ISO C features are available. __STDC_VERSION__
- * is only used here to reject older modes and report the active one.
- */
 #if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 199901L
     #error "c-manpages-serve requires ISO C99 or newer"
 #endif
@@ -61,31 +50,19 @@
 #endif
 
 /*
- * Configuration shared by startup, path validation and response generation.
- * Keep these limits centralized so changing an I/O buffer does not require
- * hunting down separate numeric literals in unrelated functions.
- *
- * Each value describes the allocated byte capacity, not the length of a
- * string that fits inside it (which must also reserve one byte for '\0').
+ * Named configuration is intentional: these are engineering decisions rather
+ * than wire-protocol values. Keep all limits in one place and explain units.
  */
 #define SERVER_DEFAULT_PORT             8000u
 #define SERVER_DEFAULT_ROOT             "build/html"
 #define SERVER_INDEX_FILENAME           "index.html"
 #define SERVER_FALLBACK_FILENAME        "c-static.7.html"
-#define SERVER_REQUEST_LIMIT            8192u
-#define SERVER_PATH_LIMIT                512u
 #define SERVER_RESPONSE_HEADER_LIMIT    1024u
-#define SERVER_FILESYSTEM_PATH_LIMIT    4096u
 #define SERVER_FILE_BUFFER              8192u
-#define SERVER_TIMEOUT_SECONDS             5u
+#define SERVER_IO_TIMEOUT_MS            5000u
+#define SERVER_HEADER_DEADLINE_MS       5000u
 
-/**
- * @brief Explicit numeric codes for the HTTP responses this server emits.
- *
- * The protocol assigns these numbers: their values are not arbitrary tuning
- * parameters. Named constants prevent accidentally using the wrong status
- * while keeping wire-format output unchanged.
- */
+/** @brief Numeric HTTP statuses; never confuse them with transfer completion. */
 typedef enum http_status
 {
     HTTP_STATUS_OK                    = 200,
@@ -93,37 +70,49 @@ typedef enum http_status
     HTTP_STATUS_FORBIDDEN             = 403,
     HTTP_STATUS_NOT_FOUND             = 404,
     HTTP_STATUS_METHOD_NOT_ALLOWED    = 405,
+    HTTP_STATUS_REQUEST_TIMEOUT       = 408,
     HTTP_STATUS_URI_TOO_LONG          = 414,
     HTTP_STATUS_HEADERS_TOO_LARGE     = 431,
     HTTP_STATUS_INTERNAL_ERROR        = 500
 } http_status_e;
 
-/**
- * @brief Save the server configuration after command-line validation.
- *
- * A directory is trusted as an author-controlled build output: the server
- * additionally validates that every requested filename is a single, safe
- * component and declines symlinks/reparse points as a defense in depth.
- */
+/** @brief Runtime options; document-root resources are opened separately. */
 typedef struct server_config
 {
     const char* root;
-    uint16_t    port;
-}
-server_config_t;
+    uint16_t port;
+    file_platform_root_t documents;
+} server_config_t;
 
 /**
- * @brief Send an entire byte sequence over a potentially partial TCP stream.
- * @param client Connected socket.
- * @param data Bytes to transmit.
- * @param size Number of bytes to transmit.
- * @return 0 for a complete send; -1 for disconnect, timeout or other error.
+ * @brief Result of serving a file after a request has been validated.
  *
- * send() is allowed to write fewer bytes than requested. The loop advances
- * only when it actually sends data, and waits in a blocking socket call when
- * the TCP send buffer cannot accept more. It is therefore not busy polling.
+ * status is the HTTP response status chosen. completed indicates whether
+ * all promised bytes *and headers* were transmitted successfully. Once
+ * headers have left the socket, a later read/send failure cannot change the
+ * HTTP status; the only honest response is to close and log the truncation.
  */
-static int send_all(socket_platform_socket_t client, const void* data, size_t size)
+typedef struct http_transfer_result
+{
+    uint64_t     expected_bytes;
+    uint64_t     bytes_sent;
+    const char*  failure_stage; /* Trusted static diagnostic; never user text. */
+    unsigned int status;
+    int          completed;
+} http_transfer_result_t;
+
+/**
+ * @brief Fully transmit a buffer without assuming TCP send() is atomic.
+ * @param sent_bytes Optional counter updated after every successful partial send.
+ * @return 0 on complete transmission, -1 if send fails or disconnects.
+ *
+ * This loop is *not* busy waiting: socket_platform_send() blocks when the
+ * kernel send queue cannot accept data and has a finite operation timeout.
+ */
+static int send_all(socket_platform_socket_t client,
+                    const void* data,
+                    size_t size,
+                    uint64_t* sent_bytes)
 {
     const unsigned char* bytes = data;
     size_t sent = 0;
@@ -131,32 +120,32 @@ static int send_all(socket_platform_socket_t client, const void* data, size_t si
     while (sent < size)
     {
         size_t remaining = size - sent;
-        int count        = (int)(remaining > (size_t)INT_MAX ? INT_MAX : remaining);
-        int result       = socket_platform_send(client, bytes + sent, count);
+        int    count     = (int)(remaining > (size_t)INT_MAX ? INT_MAX : remaining);
+        int    result    = socket_platform_send(client, bytes + sent, count);
 
+        if (result < 0 && socket_platform_is_interrupted(socket_platform_last_error()))
+            continue;
         if (result <= 0)
             return -1;
 
         sent += (size_t)result;
+        if (sent_bytes != NULL)
+            *sent_bytes += (uint64_t)result;
     }
-
     return 0;
 }
 
 /**
- * @brief Send a complete response header without a response body.
- * @param status Standard HTTP numeric status code.
- * @param description Short standard reason phrase.
- * @param content_type MIME type including charset, if applicable.
- * @param length Decimal length of the body that a GET request would return.
- * @param extra_headers Optional CRLF-terminated trusted header string.
- * @return 0 if sent completely, -1 otherwise.
+ * @brief Construct and transmit a self-delimited HTTP response header.
+ * @param length Exact GET body length; also advertised on HEAD responses.
+ * @param extra_headers Trusted CRLF-terminated literal headers, or "".
+ * @return 0 on success, -1 on formatting or socket failure.
  */
 static int send_headers(socket_platform_socket_t client,
                         unsigned int status,
-                        const char* description,
+                        const char* reason,
                         const char* content_type,
-                        long length,
+                        uint64_t length,
                         const char* extra_headers)
 {
     char header[SERVER_RESPONSE_HEADER_LIMIT];
@@ -164,35 +153,32 @@ static int send_headers(socket_platform_socket_t client,
                          sizeof(header),
                          "HTTP/1.1 %u %s\r\n"
                          "Content-Type: %s\r\n"
-                         "Content-Length: %ld\r\n"
+                         "Content-Length: %" PRIu64 "\r\n"
                          "Connection: close\r\n"
                          "Cache-Control: no-store\r\n"
                          "X-Content-Type-Options: nosniff\r\n"
                          "%s"
                          "\r\n",
                          status,
-                         description,
+                         reason,
                          content_type,
                          length,
                          extra_headers);
 
     if (count < 0 || (size_t)count >= sizeof(header))
         return -1;
-
-    return send_all(client, header, (size_t)count);
+    return send_all(client, header, (size_t)count, NULL);
 }
 
 /**
- * @brief Return a small plain-text error page, without reflecting user input.
- * @param head_only Suppress the body for an HTTP HEAD request.
- *
- * The error string comes exclusively from our own constants, not a request
- * path, preventing untrusted request text from reaching the HTML response.
+ * @brief Emit a small fixed error response without reflecting request text.
+ * @return 0 on complete response, -1 if the peer disconnected or send failed.
+ * @note HEAD errors carry GET's Content-Length but omit the response body.
  */
-static void send_error(socket_platform_socket_t client,
-                       unsigned int status,
-                       const char* reason,
-                       int head_only)
+static int send_error(socket_platform_socket_t client,
+                      unsigned int status,
+                      const char* reason,
+                      int head_only)
 {
     static const char body[] = "C Manual Pages: request could not be served.\n";
     const char* extra = status == HTTP_STATUS_METHOD_NOT_ALLOWED ? "Allow: GET, HEAD\r\n" : "";
@@ -201,47 +187,101 @@ static void send_error(socket_platform_socket_t client,
                      status,
                      reason,
                      "text/plain; charset=utf-8",
-                     (long)(sizeof(body) - 1u),
+                     sizeof(body) - 1u,
                      extra) != 0)
-    {
-        return;
-    }
+        return -1;
 
-    if (!head_only)
-        (void)send_all(client, body, sizeof(body) - 1u);
+    return head_only ? 0 : send_all(client, body, sizeof(body) - 1u, NULL);
 }
 
 /**
- * @brief Receive one bounded HTTP request header block.
- * @return 0 on success, -1 for EOF/error, -2 when request headers are too big.
+ * @brief Outcomes while reading the request header from an untrusted peer.
  *
- * We only support one request per connection. A browser normally sends the
- * entire header block immediately; the receive timeout prevents a connected
- * but silent client from monopolizing this single-threaded server forever.
+ * The timeout result includes both SO_RCVTIMEO expiration and our total
+ * monotonic deadline. Incomplete/closed requests are syntactically invalid.
  */
-static int read_request(socket_platform_socket_t client, char* request, size_t capacity)
+typedef enum request_read_result
+{
+    REQUEST_READ_OK = 0,
+    REQUEST_READ_BAD,
+    REQUEST_READ_TOO_LARGE,
+    REQUEST_READ_TIMEOUT,
+    REQUEST_READ_IO_ERROR
+} request_read_result_e;
+
+/**
+ * @brief Receive until CRLFCRLF, bounded by both bytes and elapsed time.
+ *
+ * The socket has a per-operation timeout, but a client could otherwise send
+ * one byte just before every timeout and monopolize this sequential server.
+ * Before every recv, we therefore recompute the remaining time against a
+ * monotonic clock and set SO_RCVTIMEO accordingly. No sleeping/polling loop
+ * is introduced. Extra bytes after CRLFCRLF are discarded when we close the
+ * connection: request bodies and pipelining are intentionally unsupported.
+ */
+static request_read_result_e read_request(socket_platform_socket_t client,
+                                          unsigned char request[SERVER_REQUEST_LIMIT],
+                                          size_t* header_size)
 {
     size_t used = 0;
+    uint64_t started;
 
-    while (used + 1u < capacity)
+    if (socket_platform_monotonic_ms(&started) != 0)
+        return REQUEST_READ_IO_ERROR;
+
+    while (used < SERVER_REQUEST_LIMIT)
     {
-        int count = socket_platform_receive(client,
-                                            request + used,
-                                            (int)(capacity - used - 1u));
-        if (count <= 0)
-            return -1;
+        uint64_t now;
+        uint64_t elapsed;
+        unsigned int remaining;
+        int count;
+        size_t end;
+        size_t scan_start = used > 3u ? used - 3u : 0u;
+
+        if (socket_platform_monotonic_ms(&now) != 0)
+            return REQUEST_READ_IO_ERROR;
+
+        elapsed = now >= started ? now - started : 0u;
+        if (elapsed >= SERVER_HEADER_DEADLINE_MS)
+            return REQUEST_READ_TIMEOUT;
+
+        remaining = (unsigned int)(SERVER_HEADER_DEADLINE_MS - elapsed);
+        if (remaining > SERVER_IO_TIMEOUT_MS)
+            remaining = SERVER_IO_TIMEOUT_MS;
+
+        if (socket_platform_set_receive_timeout(client, remaining) != 0)
+            return REQUEST_READ_IO_ERROR;
+
+        count = socket_platform_receive(client,
+                                        request + used,
+                                        (int)(SERVER_REQUEST_LIMIT - used));
+        if (count == 0)
+            return REQUEST_READ_BAD;
+        if (count < 0)
+        {
+            int error_code = socket_platform_last_error();
+            if (socket_platform_is_interrupted(error_code))
+                continue;
+            /* Preserve a genuine socket failure rather than disguising it as a timeout. */
+            return socket_platform_is_timeout(error_code) ?
+                   REQUEST_READ_TIMEOUT : REQUEST_READ_IO_ERROR;
+        }
 
         used += (size_t)count;
-        request[used] = '\0';
-
-        if (strstr(request, "\r\n\r\n") != NULL)
-            return 0;
+        /* Only inspect the new bytes plus three from the previous read.
+         * This keeps adversarial one-byte receives linear, not quadratic,
+         * while detecting CRLFCRLF split across TCP receive boundaries.
+         */
+        end = http_find_header_end(request + scan_start, used - scan_start);
+        if (end != 0u)
+        {
+            *header_size = scan_start + end;
+            return REQUEST_READ_OK;
+        }
     }
 
-    return -2;
+    return REQUEST_READ_TOO_LARGE;
 }
-
-
 /**
  * @brief Convert a decimal string into a valid TCP port.
  *
@@ -300,286 +340,313 @@ static int parse_port(const char* text, uint16_t* result)
 
 
 /**
- * @brief Decide the MIME type based on a trusted, validated flat filename.
- * @note Unknown extensions are not served, avoiding accidental file exposure.
+ * @brief Choose the MIME type of a validated, regular file by its extension.
+ * @return Trusted literal, or NULL if the extension is unsupported.
+ * @note Unknown extensions are denied even if the filesystem file exists.
  */
 static const char* mime_type_for(const char* filename)
 {
     const char* extension = strrchr(filename, '.');
 
+    static const struct mime_entry
+    {
+        const char* suffix;
+        const char* type;
+    } types[] =
+    {
+        {".html", "text/html; charset=utf-8"},
+        {".htm",  "text/html; charset=utf-8"},
+        {".css",  "text/css; charset=utf-8"},
+        {".js",   "text/javascript; charset=utf-8"},
+        {".svg",  "image/svg+xml"},
+        {".png",  "image/png"},
+        {".jpg",  "image/jpeg"},
+        {".jpeg", "image/jpeg"},
+        {".webp", "image/webp"},
+        {".ico",  "image/x-icon"},
+        {".txt",  "text/plain; charset=utf-8"}
+    };
+
+    size_t index;
+
     if (extension == NULL)
         return NULL;
 
-    if (strcmp(extension, ".html") == 0 || strcmp(extension, ".htm") == 0)
-        return "text/html; charset=utf-8";
-
-    if (strcmp(extension, ".css") == 0)
-        return "text/css; charset=utf-8";
-
-    if (strcmp(extension, ".js") == 0)
-        return "text/javascript; charset=utf-8";
-
-    if (strcmp(extension, ".svg") == 0)
-        return "image/svg+xml";
-
-    if (strcmp(extension, ".png") == 0)
-        return "image/png";
-
-    if (strcmp(extension, ".jpg") == 0 || strcmp(extension, ".jpeg") == 0)
-        return "image/jpeg";
-
-    if (strcmp(extension, ".webp") == 0)
-        return "image/webp";
-
-    if (strcmp(extension, ".ico") == 0)
-        return "image/x-icon";
-
-    if (strcmp(extension, ".txt") == 0)
-        return "text/plain; charset=utf-8";
+    for (index = 0u; index < sizeof(types) / sizeof(types[0]); index++)
+        if (strcmp(extension, types[index].suffix) == 0)
+            return types[index].type;
 
     return NULL;
 }
 
 /**
- * @brief Extract one safe filename from an HTTP origin-form request target.
- * @param target Target beginning with /, optionally followed by ?query.
- * @param filename Output array of at least SERVER_PATH_LIMIT bytes.
- * @return 0 on success, -1 if path syntax is unsafe or unsupported.
+ * @brief Copy a strict origin-form target into a safe, flat filename.
+ * @param target NUL-terminated, validated HTTP target.
+ * @param filename Receives one ASCII filename; never a parent path.
+ * @param root_requested Receives whether the browser requested '/' itself.
+ * @return 0 on success; -1 on invalid or unsupported target syntax.
  *
- * Only flat ASCII filenames consisting of letters, digits, dot, underscore
- * and hyphen are supported. Slashes, backslashes, percent encoding, control
- * characters and dot-prefixed names are rejected. We intentionally don't
- * decode URL escapes: accepting encoded slashes would otherwise introduce
- * a second, easily mishandled path interpretation.
+ * We do not decode percent escapes and do not support directories. The
+ * narrow grammar prevents alternate path interpretations on Unix/Windows,
+ * including encoded '/', '\\', path segments, NUL bytes and drive names.
  */
-static int decode_target(const char* target, char filename[SERVER_PATH_LIMIT])
+static int decode_target(const char* target,
+                         char filename[SERVER_PATH_LIMIT],
+                         int* root_requested)
 {
-    size_t index = 0;
     const char* cursor;
+    size_t index = 0u;
 
     if (target[0] != '/')
         return -1;
 
     cursor = target + 1;
-    if (*cursor == '\0' || *cursor == '?')
+    *root_requested = *cursor == '\0' || *cursor == '?';
+    if (*root_requested)
     {
-        /* Phase C will generate index.html; fall back to the first manual. */
         (void)strcpy(filename, SERVER_INDEX_FILENAME);
         return 0;
     }
 
-    for (; *cursor != '\0' && *cursor != '?'; cursor++)
+    while (*cursor != '\0' && *cursor != '?')
     {
-        unsigned char character = (unsigned char)*cursor;
-        int valid = (character >= 'a' && character <= 'z') ||
-                    (character >= 'A' && character <= 'Z') ||
-                    (character >= '0' && character <= '9') ||
-                     character == '.' || character == '-' || character == '_';
+        unsigned char c = (unsigned char)*cursor++;
+        int valid = (c >= 'a' && c <= 'z') ||
+                    (c >= 'A' && c <= 'Z') ||
+                    (c >= '0' && c <= '9') ||
+                     c == '.' || c == '-' || c == '_';
 
         if (!valid || index + 1u >= SERVER_PATH_LIMIT)
             return -1;
-
-        filename[index++] = (char)character;
+        filename[index++] = (char)c;
     }
 
     filename[index] = '\0';
     if (index == 0u || filename[0] == '.')
         return -1;
 
+    /* Fragments are never transmitted in HTTP request targets. */
+    for (; *cursor != '\0'; cursor++)
+        if (*cursor == '#')
+            return -1;
+
     return 0;
 }
 
 /**
- * @brief Check the requested file is ordinary and not a symbolic link.
- * @return Nonzero for an ordinary file, zero otherwise.
+ * @brief Transfer a validated static file and report status and completion.
  *
- * This additional check is not meant to guarantee safety against a malicious
- * actor racing file replacement inside the trusted build directory. We do
- * not expose this development server to untrusted networks.
+ * The file handle is obtained before sending headers. The first read is also
+ * performed before HTTP 200, allowing an immediately unreadable file to yield
+ * HTTP 500. Mid-stream errors cannot change an already-sent response: they
+ * are detected, recorded, and result in a closed (truncated) connection.
+ *
+ * @param filename Mutable filename for '/' fallback to c-static.7.html.
+ * @param root_requested Only the root URL may use the old-page fallback.
  */
-static int is_safe_regular_file(const char* path)
+static http_transfer_result_t serve_file(socket_platform_socket_t client,
+                                         const server_config_t* config,
+                                         char filename[SERVER_PATH_LIMIT],
+                                         int head_only,
+                                         int root_requested)
 {
-#ifdef _WIN32
-    DWORD attributes = GetFileAttributesA(path);
+    http_transfer_result_t result =
+    {
+        .status         = HTTP_STATUS_INTERNAL_ERROR,
+        .expected_bytes = 0u,
+        .bytes_sent     = 0u,
+        .completed      = 0,
+        .failure_stage  = NULL
+    };
+    const char*            type   = mime_type_for(filename);
+    file_platform_handle_t file   = FILE_PLATFORM_INVALID;
+    file_platform_result_e opened;
 
-    return attributes != INVALID_FILE_ATTRIBUTES &&
-           (attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) == 0;
-#else
-    struct stat details;
-
-    return lstat(path, &details) == 0 && S_ISREG(details.st_mode);
-#endif
-}
-
-/**
- * @brief Stream a single generated file, or produce the relevant HTTP error.
- * @param filename Validated flat filename, never a caller-provided path.
- * @param head_only Nonzero for HEAD, where only headers are written.
- * @return HTTP status for diagnostic logging.
- */
-static unsigned int serve_file(socket_platform_socket_t client,
-                               const server_config_t* config,
-                               const char* filename,
-                               int head_only)
-{
-    char path[SERVER_FILESYSTEM_PATH_LIMIT];
     unsigned char buffer[SERVER_FILE_BUFFER];
-    const char* type = mime_type_for(filename);
-    FILE* file;
-    long  length;
-    int   count;
+    int first_read = 0;
 
     if (type == NULL)
     {
-        send_error(client, HTTP_STATUS_FORBIDDEN, "Forbidden", head_only);
-        return HTTP_STATUS_FORBIDDEN;
+        result.status = HTTP_STATUS_FORBIDDEN;
+        result.completed = send_error(client, result.status, "Forbidden", head_only) == 0;
+        return result;
     }
 
-    count = snprintf(path, sizeof(path), "%s/%s", config->root, filename);
-    if (count < 0 || (size_t)count >= sizeof(path))
+    opened = file_platform_open(&config->documents, filename, &file, &result.expected_bytes);
+    if (opened == FILE_PLATFORM_NOT_FOUND && root_requested)
     {
-        send_error(client, HTTP_STATUS_URI_TOO_LONG, "URI Too Long", head_only);
-        return HTTP_STATUS_URI_TOO_LONG;
+        /* Only an actual '/' request may fall back. /index.html returns 404. */
+        (void)strcpy(filename, SERVER_FALLBACK_FILENAME);
+        type = mime_type_for(filename);
+        opened = file_platform_open(&config->documents, filename, &file, &result.expected_bytes);
+    }
+    if (opened != FILE_PLATFORM_OK)
+    {
+        result.status = opened == FILE_PLATFORM_NOT_FOUND ?
+                        HTTP_STATUS_NOT_FOUND : HTTP_STATUS_INTERNAL_ERROR;
+        result.completed = send_error(client,
+                                      result.status,
+                                      result.status == HTTP_STATUS_NOT_FOUND ? "Not Found"
+                                                                             : "Internal Server Error",
+                                      head_only) == 0;
+        return result;
     }
 
-    if (!is_safe_regular_file(path))
+    /* Check the first read before committing to success on the wire. */
+    if (!head_only && result.expected_bytes > 0u)
     {
-        send_error(client, HTTP_STATUS_NOT_FOUND, "Not Found", head_only);
-        return HTTP_STATUS_NOT_FOUND;
+        first_read = file_platform_read(file, buffer, sizeof(buffer));
+        if (first_read <= 0)
+        {
+            (void)file_platform_close(file);
+            result.status = HTTP_STATUS_INTERNAL_ERROR;
+            result.completed = send_error(client,
+                                          result.status,
+                                          "Internal Server Error",
+                                          head_only) == 0;
+            return result;
+        }
     }
 
-    file = fopen(path, "rb");
-    if (file == NULL)
+    result.status = HTTP_STATUS_OK;
+    if (send_headers(client, result.status, "OK", type, result.expected_bytes, "") != 0)
     {
-        send_error(client, HTTP_STATUS_NOT_FOUND, "Not Found", head_only);
-        return HTTP_STATUS_NOT_FOUND;
-    }
-
-    /* fseek/ftell is adequate for these small, generated documentation files.
-     * Files larger than LONG_MAX are deliberately not a supported use case.
-     */
-    if (fseek(file, 0L, SEEK_END) != 0 ||
-        (length = ftell(file)) < 0 ||
-        fseek(file, 0L, SEEK_SET) != 0)
-    {
-        (void)fclose(file);
-        send_error(client, HTTP_STATUS_INTERNAL_ERROR, "Internal Server Error", head_only);
-        return HTTP_STATUS_INTERNAL_ERROR;
-    }
-
-    if (send_headers(client, HTTP_STATUS_OK, "OK", type, length, "") != 0)
-    {
-        (void)fclose(file);
-        return HTTP_STATUS_OK;
+        result.failure_stage = "HTTP header send";
+        goto cleanup;
     }
 
     if (!head_only)
     {
-        size_t received;
+        uint64_t remaining = result.expected_bytes;
+        int count = first_read;
 
-        while ((received = fread(buffer, 1u, sizeof(buffer), file)) > 0u)
-            if (send_all(client, buffer, received) != 0)
+        while (remaining > 0u)
+        {
+            size_t transmit;
+
+            if (count <= 0)
+            {
+                result.failure_stage = count < 0 ? "file read" : "premature file EOF";
                 break;
+            }
+
+            transmit = (uint64_t)count > remaining ? (size_t)remaining : (size_t)count;
+            if (send_all(client, buffer, transmit, &result.bytes_sent) != 0)
+            {
+                result.failure_stage = "body send";
+                break;
+            }
+            remaining -= (uint64_t)transmit;
+            if (remaining == 0u)
+                break;
+
+            count = file_platform_read(file, buffer, sizeof(buffer));
+        }
+        if (remaining != 0u)
+            goto cleanup;
     }
 
-    (void)fclose(file);
-    return HTTP_STATUS_OK;
+    result.completed = 1;
+
+cleanup:
+    if (file_platform_close(file) != 0)
+    {
+        result.completed = 0;
+        result.failure_stage = "file close";
+    }
+    return result;
 }
 
 /**
- * @brief Process exactly one HTTP request from the accepted connection.
+ * @brief Process a single accepted connection, never reusing it for requests.
  *
- * The deliberately limited parser recognizes HTTP/1.0 and HTTP/1.1 request
- * lines, ignores request headers, and always returns Connection: close. No
- * request bodies are read or processed. This is sufficient for static browser
- * previews and avoids the complexity of HTTP request framing and pipelining.
+ * All network inputs are parsed as bytes before the validated request target
+ * reaches decode_target(). Malformed requests receive fixed error text with
+ * a connection close. A failed response write is recorded as incomplete,
+ * never silently reported as a successful file transfer.
  */
 static void handle_client(socket_platform_socket_t client, const server_config_t* config)
 {
-    char  request[SERVER_REQUEST_LIMIT];
-    char  method[16];
-    char  target[SERVER_PATH_LIMIT];
-    char  version[16];
-    char  extra[2];
-    char  filename[SERVER_PATH_LIMIT];
-    char* line_end;
-    int   parsed;
-    int   head_only;
-    unsigned int result;
+    unsigned char received[SERVER_REQUEST_LIMIT];
+    size_t header_size = 0;
+    char filename[SERVER_PATH_LIMIT];
+    http_request_t request;
+    http_parse_result_e parsed;
+    request_read_result_e read_result;
+    http_transfer_result_t transfer;
+    int root_requested = 0;
 
-    if (socket_platform_set_timeouts(client, SERVER_TIMEOUT_SECONDS) != 0)
-        return;
-
-    parsed = read_request(client, request, sizeof(request));
-    if (parsed != 0)
+    if (socket_platform_set_timeouts(client,
+                                     SERVER_IO_TIMEOUT_MS,
+                                     SERVER_IO_TIMEOUT_MS) != 0)
     {
-        send_error(client, parsed == -2 ? HTTP_STATUS_HEADERS_TOO_LARGE : HTTP_STATUS_BAD_REQUEST,
-                   parsed == -2 ? "Request Header Fields Too Large" : "Bad Request", 0);
+        (void)fprintf(stderr, "Could not configure client socket timeouts.\n");
         return;
     }
 
-    line_end = strstr(request, "\r\n");
-    if (line_end == NULL)
+    read_result = read_request(client, received, &header_size);
+    if (read_result != REQUEST_READ_OK)
     {
-        send_error(client, HTTP_STATUS_BAD_REQUEST, "Bad Request", 0);
-        return;
-    }
+        unsigned int status = HTTP_STATUS_BAD_REQUEST;
+        const char* reason = "Bad Request";
 
-    *line_end = '\0';
-    parsed = sscanf(request, "%15s %511s %15s %1s", method, target, version, extra);
-    if (parsed != 3 ||
-        (strcmp(version, "HTTP/1.1") != 0 && strcmp(version, "HTTP/1.0") != 0))
-    {
-        send_error(client, HTTP_STATUS_BAD_REQUEST, "Bad Request", 0);
-        return;
-    }
-
-    head_only = strcmp(method, "HEAD") == 0;
-    if (strcmp(method, "GET") != 0 && !head_only)
-    {
-        send_error(client, HTTP_STATUS_METHOD_NOT_ALLOWED, "Method Not Allowed", 0);
-        return;
-    }
-
-    if (decode_target(target, filename) != 0)
-    {
-        send_error(client, HTTP_STATUS_BAD_REQUEST, "Bad Request", head_only);
-        return;
-    }
-
-    if (strcmp(filename, SERVER_INDEX_FILENAME) == 0)
-    {
-        /* Until Phase C creates an index, '/' opens the static manual. */
-        char candidate[SERVER_FILESYSTEM_PATH_LIMIT];
-        int count = snprintf(candidate, sizeof(candidate), "%s/" SERVER_INDEX_FILENAME, config->root);
-
-        if (count < 0 || (size_t)count >= sizeof(candidate) ||
-            !is_safe_regular_file(candidate))
+        if (read_result == REQUEST_READ_TOO_LARGE)
         {
-            (void)strcpy(filename, SERVER_FALLBACK_FILENAME);
+            status = HTTP_STATUS_HEADERS_TOO_LARGE;
+            reason = "Request Header Fields Too Large";
         }
+        else if (read_result == REQUEST_READ_TIMEOUT)
+        {
+            status = HTTP_STATUS_REQUEST_TIMEOUT;
+            reason = "Request Timeout";
+        }
+        else if (read_result == REQUEST_READ_IO_ERROR)
+        {
+            status = HTTP_STATUS_INTERNAL_ERROR;
+            reason = "Internal Server Error";
+        }
+        (void)send_error(client, status, reason, 0);
+        return;
     }
 
-    result = serve_file(client, config, filename, head_only);
-    printf("%s /%s -> %u\n", method, filename, result);
-    fflush(stdout);
+    parsed = http_parse_headers(received, header_size, &request);
+    if (parsed != HTTP_PARSE_OK)
+    {
+        unsigned int status = parsed == HTTP_PARSE_METHOD_NOT_ALLOWED ?
+                              HTTP_STATUS_METHOD_NOT_ALLOWED :
+                              parsed == HTTP_PARSE_URI_TOO_LONG ?
+                                  HTTP_STATUS_URI_TOO_LONG : HTTP_STATUS_BAD_REQUEST;
+        const char* reason = status == HTTP_STATUS_METHOD_NOT_ALLOWED ? "Method Not Allowed" :
+                             status == HTTP_STATUS_URI_TOO_LONG ? "URI Too Long" : "Bad Request";
+        (void)send_error(client, status, reason, 0);
+        return;
+    }
+
+    if (decode_target(request.target, filename, &root_requested) != 0)
+    {
+        (void)send_error(client, HTTP_STATUS_BAD_REQUEST, "Bad Request", request.head_only);
+        return;
+    }
+
+    transfer = serve_file(client, config, filename, request.head_only, root_requested);
+    (void)printf("%s /%s -> %u (%" PRIu64 "/%" PRIu64 " bytes%s%s%s)\n",
+                 request.head_only ? "HEAD" : "GET",
+                 filename,
+                 transfer.status,
+                 transfer.bytes_sent,
+                 transfer.expected_bytes,
+                 transfer.completed ? "" : ", incomplete",
+                 transfer.failure_stage == NULL ? "" : ": ",
+                 transfer.failure_stage == NULL ? "" : transfer.failure_stage);
+    (void)fflush(stdout);
 }
 
 /**
- * @brief Print command-line syntax and the configured default values.
- * @param stream stdout for --help, stderr for invalid arguments.
- * @param program Program name as passed through argv[0].
- *
- * Using an explicit stream keeps argument errors on stderr while normal
- * informational output remains on stdout.
+ * @brief Print CLI syntax and derived default values to the requested stream.
+ * @note Errors go to stderr, while --help goes to stdout.
  */
 static void print_usage(FILE* stream, const char* program)
 {
-    /*
-     * Both the displayed defaults and actual configuration come from the
-     * same constants. Invalid input is explained on stderr; --help is sent
-     * to stdout so it behaves naturally in shell scripts.
-     */
     (void)fprintf(stream,
                   "Usage: %s [--root DIRECTORY] [--port 1-%u]\n"
                   "Local-only C Manual Pages HTTP preview server.\n"
@@ -591,12 +658,12 @@ static void print_usage(FILE* stream, const char* program)
 }
 
 /**
- * @brief Start the server and block waiting for local HTTP requests.
- * @return EXIT_SUCCESS on normal exit or EXIT_FAILURE on configuration errors.
+ * @brief Configure a trusted root and run the sequential, blocking listener.
  *
- * There is deliberately no select/poll loop: accept() blocks inside the OS
- * until a client connects. Connections are handled sequentially with blocking
- * I/O and bounded per-operation waits. CPU use should be near zero at idle.
+ * The document root is opened *before* any network listener exists, so a
+ * broken path does not create a server that just replies with 404 forever.
+ * Shutdown on Ctrl+C is process termination; the OS releases outstanding
+ * descriptors. On runtime errors the explicit cleanup path releases them.
  */
 int main(int argc, char* argv[])
 {
@@ -615,82 +682,80 @@ int main(int argc, char* argv[])
             print_usage(stdout, argv[0]);
             return EXIT_SUCCESS;
         }
-
         if (strcmp(argv[argument], "--root") == 0 &&
-            argument + 1 < argc                   &&
-            argv[argument + 1][0] != '\0')
+            argument + 1 < argc && argv[argument + 1][0] != '\0')
         {
             config.root = argv[++argument];
             continue;
         }
-
         if (strcmp(argv[argument], "--port") == 0 && argument + 1 < argc &&
             parse_port(argv[argument + 1], &config.port) == 0)
         {
             argument++;
             continue;
         }
-
-        fprintf(stderr, "Invalid argument: %s\n", argv[argument]);
+        (void)fprintf(stderr, "Invalid argument: %s\n", argv[argument]);
         print_usage(stderr, argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    if (file_platform_open_root(&config.documents, config.root) != 0)
+    {
+        (void)fprintf(stderr, "Cannot open document root: %s\n", config.root);
         return EXIT_FAILURE;
     }
 
     if (socket_platform_initialize() != 0)
     {
-        fprintf(stderr, "Could not initialize the networking library.\n");
+        (void)fprintf(stderr, "Could not initialize networking.\n");
+        file_platform_close_root(&config.documents);
         return EXIT_FAILURE;
     }
 
 #ifndef _WIN32
-    /*
-     * Browsers can disconnect in the middle of a send. Ignoring SIGPIPE means
-     * send() reports EPIPE instead of abruptly killing the whole process.
-     */
+    /* A disconnected browser should give send() EPIPE, not terminate the server. */
     (void)signal(SIGPIPE, SIG_IGN);
 #endif
 
     listener = socket_platform_listen(config.port);
     if (listener == SOCKET_PLATFORM_INVALID)
     {
-        fprintf(stderr, "Cannot listen on 127.0.0.1:%u (socket error %d).\n",
-                (unsigned int)config.port,
-                socket_platform_last_error());
+        int error_code = socket_platform_last_error();
+        (void)fprintf(stderr,
+                      "Cannot listen on 127.0.0.1:%u (socket error %d).\n",
+                      (unsigned int)config.port,
+                      error_code);
         socket_platform_shutdown();
+        file_platform_close_root(&config.documents);
         return EXIT_FAILURE;
     }
 
-    printf("C Manual Pages -- Local Documentation Server (%s)\n"
-           "Serving: %s\n"
-           "Address: http://127.0.0.1:%u/\n"
-           "Press Ctrl+C to stop.\n",
-           SERVER_C_STANDARD,
-           config.root,
-           (unsigned int)config.port);
-    fflush(stdout);
+    (void)printf("C Manual Pages -- Local Documentation Server (%s)\n"
+                 "Serving: %s\n"
+                 "Address: http://127.0.0.1:%u/\n"
+                 "Press Ctrl+C to stop.\n",
+                 SERVER_C_STANDARD,
+                 config.root,
+                 (unsigned int)config.port);
+    (void)fflush(stdout);
 
-
-server_main_loop:
+    for (;;)
     {
         socket_platform_socket_t client = socket_platform_accept(listener);
-
         if (client == SOCKET_PLATFORM_INVALID)
         {
-            if (socket_platform_was_interrupted())
-                goto server_main_loop;
-
-            fprintf(stderr, "Accept failed (socket error %d).\n",
-                    socket_platform_last_error());
-            goto fail;
+            int error_code = socket_platform_last_error();
+            if (socket_platform_is_interrupted(error_code))
+                continue;
+            (void)fprintf(stderr, "Accept failed (socket error %d).\n", error_code);
+            break;
         }
-
         handle_client(client, &config);
         socket_platform_close(client);
-        goto server_main_loop;
     }
 
-fail:
     socket_platform_close(listener);
     socket_platform_shutdown();
+    file_platform_close_root(&config.documents);
     return EXIT_FAILURE;
 }

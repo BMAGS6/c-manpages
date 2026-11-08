@@ -63,13 +63,32 @@ socket_platform_socket_t socket_platform_accept(socket_platform_socket_t listene
 
 
 /**
- * @brief Bound the duration of blocking client receive and send operations.
+ * @brief Bound blocking client receive and send operations in milliseconds.
  * @param client Connected socket to configure.
- * @param seconds Positive per-operation timeout in whole seconds.
+ * @param receive_ms Positive receive timeout, never zero (which means infinite).
+ * @param send_ms Positive send timeout, never zero.
  * @return 0 on success; -1 on failure.
  * @note These timeouts do not apply to the listening socket's accept call.
  */
-int socket_platform_set_timeouts(socket_platform_socket_t client, unsigned int seconds);
+int socket_platform_set_timeouts(socket_platform_socket_t client,
+                                 unsigned int receive_ms,
+                                 unsigned int send_ms);
+
+/**
+ * @brief Update only the blocking receive timeout for a remaining deadline.
+ * @param milliseconds Strictly positive remaining wait, rounded up by caller.
+ * @return 0 on success, -1 on error with platform last-error preserved.
+ */
+int socket_platform_set_receive_timeout(socket_platform_socket_t client,
+                                        unsigned int milliseconds);
+
+/**
+ * @brief Read a monotonic millisecond clock for elapsed-time deadlines.
+ * @param milliseconds Receives a clock value unaffected by wall-clock changes.
+ * @return 0 on success; -1 if no monotonic clock could be obtained.
+ * @note Not a calendar time; only subtract two readings to measure elapsed time.
+ */
+int socket_platform_monotonic_ms(uint64_t* milliseconds);
 
 
 /**
@@ -101,10 +120,18 @@ int socket_platform_last_error(void);
 
 
 /**
- * @brief Check whether a failed socket call was interrupted by a signal.
- * @return Nonzero if it can safely be retried.
+ * @brief Check a previously saved socket error for an interrupted call.
+ * @param error_code Captured immediately after a failed socket operation.
+ * @return Nonzero if the same operation can safely be retried.
  */
-int socket_platform_was_interrupted(void);
+int socket_platform_is_interrupted(int error_code);
+
+/**
+ * @brief Identify a receive/send timeout using a previously saved error code.
+ * @param error_code POSIX errno or Winsock WSAGetLastError() value.
+ * @return Nonzero for a timeout, zero for other errors.
+ */
+int socket_platform_is_timeout(int error_code);
 
 
 #ifdef __cplusplus
