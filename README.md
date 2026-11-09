@@ -104,7 +104,7 @@ linked page causes its referring pages to be revalidated. As before, run
 `make clean` after **deleting or renaming** a documentation page to remove
 orphaned generated files.
 
-Site-wide navigation and a homepage are planned for the next milestone.
+Site-wide navigation and a generated homepage are available through `make html`.
 
 ## Serve the generated HTML with any HTTP server
 
@@ -285,3 +285,27 @@ For further development, fuzzing the isolated `http_parser.c` implementation,
 Windows CI, transfer-deadline tests, and measuring idle CPU/latency under real
 browser workloads are sensible next steps. They are not prerequisites for
 using the preview server today.
+
+## Website navigation and accessibility
+
+`make html` also builds `build/html/index.html`, the documentation homepage.
+Both the homepage and every manual page link to all discovered pages, grouped
+by the first directory beneath `pages/` (for example, **Keywords** and
+**Concepts**). Adding a new Markdown source automatically adds it to the
+site's navigation and index without manually editing HTML or JavaScript.
+
+The generator saves a derived catalog in `build/site-catalog.json`. This is
+**not** a source document: it exists only to make incremental site builds
+reliable. It updates only when the page roster changes; an updated catalog
+rebuilds all sidebars and the homepage. Deleting/renaming a page still requires
+`make clean` to remove obsolete output files.
+
+Each manual page has a single main `h1` heading, followed by correctly nested
+section headings. Existing fragment identifiers are kept unchanged, so
+cross-page links continue working. The sidebar uses semantic navigation and
+`aria-current="page"`. The site includes keyboard-visible focus, a skip link,
+responsive layout, system dark mode, reduced-motion and forced-colors support.
+
+Every generated HTML file is self-contained (including its styles) and works
+without JavaScript or an HTTP server. Any static HTTP server may be used for
+preview or publication; the bundled native C server remains optional.

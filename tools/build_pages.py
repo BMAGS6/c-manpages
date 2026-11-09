@@ -16,6 +16,7 @@ discovery and dependency tracking without GNU Make extensions.
 
 import argparse
 from dataclasses import dataclass
+from string import Template
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,7 @@ import subprocess
 import sys
 
 from xrefs import ReferenceError, ReferenceResolver, rewrite_html, rewrite_mdoc
+from site_navigation import make_catalog, render_navigation, render_index_categories
 
 
 # Resolve from this file rather than the current working directory. This also
@@ -38,6 +40,10 @@ HIGHLIGHTER = ROOT / "tools" / "highlight_html.py"
 XREFS = ROOT / "tools" / "xrefs.py"
 HTML_TEMPLATE = ROOT / "templates" / "page.html"
 SITE_CSS = ROOT / "assets" / "site.css"
+SITE_NAVIGATION = ROOT / "tools" / "site_navigation.py"
+INDEX_TEMPLATE = ROOT / "templates" / "index.html"
+SITE_CATALOG = BUILD_DIR / "site-catalog.json"
+SITE_INDEX = BUILD_DIR / "html" / "index.html"
 
 # Restrict page filenames to predictable, portable Unix-man identifiers.
 STEM_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
@@ -215,6 +221,21 @@ def write_atomic(path, contents):
         temporary.unlink(missing_ok=True)
 
 
+def write_if_changed(path, contents):
+    """Update generated metadata only when its *contents* actually change.
+
+    Every call to ``make html`` regenerates the catalog from discovered pages.
+    Rewriting it unconditionally would make all pages appear stale on every
+    build and defeat incremental generation. We therefore compare content
+    before publishing an atomic replacement. Deleting or adding a page
+    changes the catalog and triggers exactly the necessary HTML rebuilds.
+    """
+    if path.is_file() and path.read_text(encoding="utf-8") == contents:
+        return False
+    write_atomic(path, contents)
+    return True
+
+
 def copy_atomic(source, destination):
     """Publish a compatibility copy with the same atomic replacement rule."""
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -329,9 +350,50 @@ class Builder:
             self.publish(page, "man", page.man_path, transformed, targets)
             print(f"MAN   {page.man_path.relative_to(ROOT)}")
 
+    def build_catalog(self):
+        """Publish a stable navigation registry derived from all source pages.
+
+        This is a build artifact (not a second source of truth). Its timestamp
+        changes only when pages are added, removed, renamed, or recategorized.
+        Every generated page embeds navigation drawn from this same registry.
+        """
+        catalog = make_catalog(self.pages, PAGE_DIR)
+        content = json.dumps(catalog, indent=2, ensure_ascii=False) + "\n"
+        write_if_changed(SITE_CATALOG, content)
+        return catalog
+
+    def build_site_index(self, catalog):
+        """Generate the offline homepage and category index incrementally.
+
+        The homepage uses the exact same navigation as documentation pages,
+        and its index links are computed from the registered page identities.
+        Existing valid output is not overwritten if rendering fails.
+        """
+        dependencies = (SITE_CATALOG, INDEX_TEMPLATE, SITE_CSS, SITE_NAVIGATION, THIS_FILE)
+        if not needs_build(SITE_INDEX, dependencies):
+            return
+        template = Template(INDEX_TEMPLATE.read_text(encoding="utf-8"))
+        rendered = template.substitute(
+            site_css=SITE_CSS.read_text(encoding="utf-8"),
+            navigation=render_navigation(catalog),
+            categories=render_index_categories(catalog),
+            page_count=str(len(catalog)),
+        )
+        write_atomic(SITE_INDEX, rendered)
+        print(f"HTML  {SITE_INDEX.relative_to(ROOT)}")
+
     def build_html(self):
-        """Resolve .md hyperlinks before the existing HTML presentation step."""
-        shared_inputs = (HTML_BUILDER, HIGHLIGHTER, HTML_TEMPLATE, SITE_CSS)
+        """Build all enhanced HTML pages with consistent, fresh site navigation.
+
+        Building the catalog first means an added/removed page updates both
+        the homepage and all existing sidebars. Page-specific references are
+        still validated by the Phase B resolver before anything is published.
+        """
+        catalog = self.build_catalog()
+        shared_inputs = (
+            HTML_BUILDER, HIGHLIGHTER, HTML_TEMPLATE, SITE_CSS,
+            SITE_CATALOG, SITE_NAVIGATION,
+        )
         for page in self.pages:
             if not self.should_build(page, "html", page.html_path, shared_inputs):
                 continue
@@ -345,12 +407,16 @@ class Builder:
             final = capture([
                 sys.executable, str(HTML_BUILDER),
                 "--template", str(HTML_TEMPLATE),
-                "--css", str(SITE_CSS), "--section", page.section,
+                "--css", str(SITE_CSS),
+                "--catalog", str(SITE_CATALOG),
+                "--section", page.section,
+                "--page-name", page.name,
             ], input_text=transformed)
             if not final.strip():
                 raise BuildError(f"empty enhanced HTML output from {page.source}")
             self.publish(page, "html", page.html_path, final, targets)
             print(f"HTML  {page.html_path.relative_to(ROOT)}")
+        self.build_site_index(catalog)
 
     def lint(self, strict=False):
         """Check every manual, retaining the previous strict/non-strict modes.

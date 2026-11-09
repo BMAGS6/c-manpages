@@ -44,6 +44,10 @@ class BuildTests(unittest.TestCase):
             "XREFS": self.root / "tools" / "xrefs.py",
             "HTML_TEMPLATE": self.root / "templates" / "page.html",
             "SITE_CSS": self.root / "assets" / "site.css",
+            "SITE_NAVIGATION": self.root / "tools" / "site_navigation.py",
+            "INDEX_TEMPLATE": self.root / "templates" / "index.html",
+            "SITE_CATALOG": self.root / "build" / "site-catalog.json",
+            "SITE_INDEX": self.root / "build" / "html" / "index.html",
         }
         previous = {key: getattr(build_pages, key) for key in replacements}
         for key, value in replacements.items():
@@ -56,8 +60,8 @@ class BuildTests(unittest.TestCase):
         # lowdown command produces a minimal standalone HTML fixture for it.
         for relative in (
             "tools/build_pages.py", "tools/build_html.py", "tools/highlight_html.py",
-            "tools/xrefs.py",
-            "templates/page.html", "assets/site.css",
+            "tools/xrefs.py", "tools/site_navigation.py",
+            "templates/page.html", "templates/index.html", "assets/site.css",
         ):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -177,6 +181,7 @@ class BuildTests(unittest.TestCase):
             self.root / "build/man7/c-storage-duration.7",
             self.root / "build/html/c-static.7.html",
             self.root / "build/html/c-storage-duration.7.html",
+            self.root / "build/html/index.html",
             self.root / "build/html/c-static-highlighted.html",
             self.root / "build/html/c-storage-duration-highlighted.html",
             self.root / "build/html/c-static-mandoc.html",
@@ -198,6 +203,63 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(
             timestamps, {path: path.stat().st_mtime_ns for path in expected}
         )
+
+    def test_site_index_and_navigation_follow_new_pages(self):
+        """Adding a page refreshes all sidebars and the homepage automatically."""
+        self.make_source("keywords", "static")
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_html()
+        original = (self.root / "build/html/c-static.7.html").read_text()
+        homepage = self.root / "build/html/index.html"
+        self.assertIn('href="c-static.7.html"', homepage.read_text())
+        self.assertNotIn('href="c-storage-duration.7.html"', original)
+        self.assertIn('aria-current="page"', original)
+
+        self.make_source("concepts", "storage-duration")
+        # A fresh invocation always rediscovers the source tree.
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_html()
+        updated = (self.root / "build/html/c-static.7.html").read_text()
+        self.assertIn('href="c-storage-duration.7.html"', updated)
+        self.assertIn('href="c-storage-duration.7.html"', homepage.read_text())
+        self.assertTrue((self.root / "build/html/c-storage-duration.7.html").is_file())
+
+        # A later build with an identical roster must not re-render the pages.
+        timestamp = homepage.stat().st_mtime_ns
+        with redirect_stdout(io.StringIO()):
+            builder.build_html()
+        self.assertEqual(timestamp, homepage.stat().st_mtime_ns)
+
+    def test_site_index_removes_deleted_pages_from_navigation(self):
+        """The catalog tracks current sources even when stale HTML files remain."""
+        self.make_source("keywords", "static")
+        temporary = self.make_source("concepts", "old-concept")
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_html()
+        temporary.unlink()
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_html()
+        homepage = (self.root / "build/html/index.html").read_text()
+        static = (self.root / "build/html/c-static.7.html").read_text()
+        self.assertNotIn('href="c-old-concept.7.html"', homepage)
+        self.assertNotIn('href="c-old-concept.7.html"', static)
+
+    def test_output_heading_hierarchy_is_accessible(self):
+        """Generated pages contain one primary heading and section h2 elements."""
+        self.make_source("keywords", "static")
+        builder = self.builder()
+        with redirect_stdout(io.StringIO()):
+            builder.build_html()
+        output = (self.root / "build/html/c-static.7.html").read_text()
+        self.assertEqual(output.count('<h1 class="page-title">'), 1)
+        self.assertIn('<h2 id="name">NAME</h2>', output)
+        self.assertIn('aria-label="Manual pages"', output)
+        self.assertIn('aria-label="On this page"', output)
+        self.assertIn('href="#main-content"', output)
 
     def test_strict_lint_shows_warnings(self):
         """Preserve visible diagnostics from mandoc even on zero exit status."""

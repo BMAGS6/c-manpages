@@ -13,14 +13,15 @@ ${site_css}
 <body>
 <a class="skip-link" href="#main-content">Skip to content</a>
 <header class="site-header">
-    <div class="site-brand">C Manual Pages</div>
+    <a class="site-brand" href="index.html">C Manual Pages</a>
     <span class="site-subtitle">A reference to the C language</span>
 </header>
 <div class="site-layout">
-    <aside class="site-sidebar" aria-label="On this page">
+    <aside class="site-sidebar" aria-label="Documentation navigation">
         <div class="sidebar-sticky">
-            <div class="sidebar-heading">ON THIS PAGE</div>
-            <nav aria-label="Table of contents">
+            ${navigation}
+            <nav class="page-toc" aria-label="On this page">
+                <h2 class="sidebar-heading">ON THIS PAGE</h2>
                 <ul class="toc-list">
                     ${toc}
                 </ul>
