@@ -26,11 +26,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            bmake \
             mandoc \
             python3-pygments \
             man-db \
             gcc
-
 
       - name: Build compatible lowdown
         run: |
@@ -41,10 +41,10 @@ jobs:
 
           cd "$RUNNER_TEMP/lowdown"
           ./configure
-          make -j2
+          bmake -j2
 
+          test -x ./lowdown
           echo "$RUNNER_TEMP/lowdown" >> "$GITHUB_PATH"
-
 
       - name: Check build environment
         run: make doctor
