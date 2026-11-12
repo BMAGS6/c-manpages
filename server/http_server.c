@@ -223,7 +223,7 @@ static request_read_result_e read_request(socket_platform_socket_t client,
                                           unsigned char request[SERVER_REQUEST_LIMIT],
                                           size_t* header_size)
 {
-    size_t used = 0;
+    size_t   used = 0;
     uint64_t started;
 
     if (socket_platform_monotonic_ms(&started) != 0)
@@ -231,21 +231,23 @@ static request_read_result_e read_request(socket_platform_socket_t client,
 
     while (used < SERVER_REQUEST_LIMIT)
     {
-        uint64_t now;
-        uint64_t elapsed;
+        uint64_t     now;
+        uint64_t     elapsed;
         unsigned int remaining;
-        int count;
-        size_t end;
-        size_t scan_start = used > 3u ? used - 3u : 0u;
+        int          count;
+        size_t       end;
+        size_t       scan_start = used > 3u ? used - 3u : 0u;
 
         if (socket_platform_monotonic_ms(&now) != 0)
             return REQUEST_READ_IO_ERROR;
 
         elapsed = now >= started ? now - started : 0u;
+
         if (elapsed >= SERVER_HEADER_DEADLINE_MS)
             return REQUEST_READ_TIMEOUT;
 
         remaining = (unsigned int)(SERVER_HEADER_DEADLINE_MS - elapsed);
+
         if (remaining > SERVER_IO_TIMEOUT_MS)
             remaining = SERVER_IO_TIMEOUT_MS;
 
@@ -257,6 +259,7 @@ static request_read_result_e read_request(socket_platform_socket_t client,
                                         (int)(SERVER_REQUEST_LIMIT - used));
         if (count == 0)
             return REQUEST_READ_BAD;
+
         if (count < 0)
         {
             int error_code = socket_platform_last_error();
@@ -482,8 +485,8 @@ static http_transfer_result_t serve_file(socket_platform_socket_t client,
     }
     if (opened != FILE_PLATFORM_OK)
     {
-        result.status = opened == FILE_PLATFORM_NOT_FOUND ?
-                        HTTP_STATUS_NOT_FOUND : HTTP_STATUS_INTERNAL_ERROR;
+        result.status = opened == FILE_PLATFORM_NOT_FOUND ? HTTP_STATUS_NOT_FOUND
+                                                          : HTTP_STATUS_INTERNAL_ERROR;
         result.completed = send_error(client,
                                       result.status,
                                       result.status == HTTP_STATUS_NOT_FOUND ? "Not Found"
@@ -567,14 +570,14 @@ cleanup:
  */
 static void handle_client(socket_platform_socket_t client, const server_config_t* config)
 {
-    unsigned char received[SERVER_REQUEST_LIMIT];
-    size_t header_size = 0;
-    char filename[SERVER_PATH_LIMIT];
-    http_request_t request;
-    http_parse_result_e parsed;
-    request_read_result_e read_result;
+    unsigned char          received[SERVER_REQUEST_LIMIT];
+    size_t                 header_size = 0;
+    char                   filename[SERVER_PATH_LIMIT];
+    http_request_t         request;
+    http_parse_result_e    parsed;
+    request_read_result_e  read_result;
     http_transfer_result_t transfer;
-    int root_requested = 0;
+    int                    root_requested = 0;
 
     if (socket_platform_set_timeouts(client,
                                      SERVER_IO_TIMEOUT_MS,
@@ -629,6 +632,7 @@ static void handle_client(socket_platform_socket_t client, const server_config_t
     }
 
     transfer = serve_file(client, config, filename, request.head_only, root_requested);
+
     (void)printf("%s /%s -> %u (%" PRIu64 "/%" PRIu64 " bytes%s%s%s)\n",
                  request.head_only ? "HEAD" : "GET",
                  filename,
