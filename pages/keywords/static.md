@@ -4,7 +4,7 @@ source: C Manual Pages
 
 # NAME
 
-c-static -- the static keyword and storage-class specifier in C
+c-static -- the `static` keyword and storage-class specifier in C
 
 # DESCRIPTION
 
@@ -71,7 +71,7 @@ literal.
 void example(void)
 {
     /* Unnamed int object with static storage duration. */
-    int *p = &(static int){42};
+    int* p = &(static int){42};
 }
 ```
 
@@ -112,6 +112,8 @@ duration, regardless of whether `static` is present. At file scope, the
 significant effect of `static` is therefore on linkage.
 
 ```c
+/* At file scope: */
+
 int external_object;        /* External linkage, static storage duration. */
 static int internal_object; /* Internal linkage, static storage duration. */
 ```
@@ -165,8 +167,8 @@ literal. The resulting unnamed object has **static storage duration**.
 ```c
 void example(void)
 {
-    int *pointer_to_automatic = &(int){1};
-    int *pointer_to_static    = &(static int){2};
+    int* pointer_to_automatic = &(int){1};
+    int* pointer_to_static    = &(static int){2};
 }
 ```
 
@@ -215,7 +217,8 @@ void demonstrate(void)
     example(a); /* Valid. */
     example(b); /* Valid. */
 
-    /* example(c); */ /* Would have undefined behavior. */
+    /* Would have undefined behavior: */
+    /* example(c); */
 }
 ```
 
