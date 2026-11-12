@@ -26,11 +26,25 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            lowdown \
             mandoc \
             python3-pygments \
             man-db \
             gcc
+
+
+      - name: Build compatible lowdown
+        run: |
+          git clone --depth 1 \
+            --branch VERSION_3_1_1 \
+            https://github.com/kristapsdz/lowdown.git \
+            "$RUNNER_TEMP/lowdown"
+
+          cd "$RUNNER_TEMP/lowdown"
+          ./configure
+          make -j2
+
+          echo "$RUNNER_TEMP/lowdown" >> "$GITHUB_PATH"
+
 
       - name: Check build environment
         run: make doctor
