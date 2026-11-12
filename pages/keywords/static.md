@@ -251,6 +251,172 @@ access to at least `count` elements.
   storage-class specifiers and the initialization of objects with static storage
   duration.
 
+# IMPLEMENTATION NOTES
+
+The following examples illustrate how particular projects,
+operating systems, and compilers use or interpret `static`.
+Unless otherwise indicated, these uses rely on standard C semantics. 
+Project-specific macros, compiler diagnostics, and linker behavior are not 
+themselves requirements of ISO C.
+
+## Linux Kernel: The `at_least` Macro
+
+The Linux kernel uses `at_least` to express the minimum number of elements 
+required by an array parameter.
+
+In `include/linux/compiler_types.h`, the macro is defined conditionally:
+
+```c
+#ifndef __CHECKER__
+#   define at_least static
+#else
+#   define at_least
+#endif
+```
+
+This permits declarations such as:
+
+```c
+void process(unsigned char data[at_least 16]);
+```
+
+Under ordinary compilation, this is equivalent to:
+
+```c
+void process(unsigned char data[static 16]);
+```
+
+The declaration requires callers to provide access to at least 16 elements. 
+The `at_least` spelling makes this requirement more apparent, without changing 
+its semantics, especially to those unfamiliar with this somewhat uncommon and
+technical usage of the `static` keyword.
+
+When `__CHECKER__` is defined for Linux's Sparse static analyzer,
+the macro expands to nothing, avoiding compatibility problems with the 
+array-parameter syntax.
+
+The macro is a Linux kernel convention, not an ISO C keyword or a language 
+extension. The underlying array-parameter feature has been part of standard C 
+since C99 [9].
+
+
+The `at_least` macro was introduced by Jason A. Donenfeld in November 2025, 
+as part of an effort to annotate fixed-size array parameters in Linux kernel 
+cryptographic interfaces. The changes were submitted for inclusion in 
+Linux 6.19, covering algorithms including SHA-1, SHA-2, ChaCha, Poly1305, 
+and Curve25519 [13].
+
+Before introducing the macro, an existing local variable named `at_least` in 
+the Intel `iwlwifi` driver was renamed to `min_mode` to avoid a preprocessor 
+name collision [14]. This illustrates how introducing a widely visible macro can
+require changes to otherwise unrelated code.
+
+
+## SQLite: Internal Linkage in the Amalgamation
+
+SQLite distributes an amalgamation that combines many source files into a 
+single C translation unit.
+
+Its amalgamation generator can define `SQLITE_PRIVATE` as `static`:
+
+```c
+#ifndef SQLITE_PRIVATE
+#   define SQLITE_PRIVATE static
+#endif
+```
+
+The generator uses this macro to control the linkage of internal functions 
+and objects while keeping public API declarations separate.
+
+The amalgamation generator normally enables this behavior.
+It also provides a `--nostatic` option and allows `SQLITE_PRIVATE` to be 
+defined differently.
+
+This illustrates how the preprocessor can be used to control linkage across 
+different build configurations without changing the underlying C declarations 
+manually.
+
+The `SQLITE_PRIVATE` macro is specific to SQLite; its expansion uses the 
+ordinary ISO C meaning of `static` [10].
+
+The `SQLITE_PRIVATE` convention was introduced in SQLite 3.4.1, released on 
+July 20, 2007. Its release notes specifically record the use of 
+`SQLITE_PRIVATE`, defaulting to `static`, for internal functions in the 
+amalgamation.
+
+SQLite 3.4.2, released on August 13, 2007, further improved the amalgamation 
+generator so that symbols were prefixed with either `SQLITE_PRIVATE` or 
+`SQLITE_API`, as appropriate [15, 16].
+
+## FreeBSD: Static Objects and Kernel Linker Sets
+
+FreeBSD uses a kernel initialization framework called `SYSINIT` to register 
+initialization routines and arrange their execution during kernel startup.
+
+As documented in the FreeBSD Architecture Handbook, the `SYSINIT` machinery 
+creates registration structures declared with `static`. 
+These structures are also placed into linker sets through platform-specific 
+mechanisms.
+
+The `static` declaration gives the registration object's identifier internal 
+linkage. Nevertheless, the linker can collect references to these objects 
+into a set that the FreeBSD kernel subsequently processes.
+
+This demonstrates an important distinction: internal linkage restricts 
+references through an identifier, but does not prevent an object's address from 
+being made available through other mechanisms.
+
+FreeBSD's linker-set mechanism is implementation-specific.
+The internal-linkage behavior of `static` is standard C [11].
+
+The `SYSINIT` framework first appeared in FreeBSD 2.2, released in 1997. 
+The FreeBSD `SYSINIT(9)` manual credits Terrence Lambert with developing the 
+framework.
+
+The framework remains documented in modern FreeBSD releases, illustrating the 
+longevity of this approach to kernel initialization and linker-based 
+registration [17].
+
+## GCC: Array-Parameter Diagnostics
+
+GCC uses array-parameter declarations to help diagnose potentially invalid 
+calls and inconsistent redeclarations.
+
+For example:
+
+```c
+void process(int values[static 4]);
+```
+
+The declaration requires the argument to provide access to at least four 
+`int` elements.
+
+GCC's `-Warray-parameter` option can diagnose inconsistent array-parameter 
+declarations. GCC may also use array-bound information when producing warnings 
+such as `-Warray-bounds` and `-Wstringop-overflow`.
+
+For example, the following declarations may produce an inconsistency warning:
+
+```c
+void process(int values[static 4]);
+void process(int values[]);
+```
+
+The first declaration specifies an explicit minimum-size contract, 
+while the second omits it.
+
+These diagnostics are compiler facilities, not runtime bounds checks. 
+ISO C does not require implementations to diagnose every violation of the 
+minimum-size contract [12].
+
+The `-Warray-parameter` diagnostic was introduced in GCC 11, first released 
+on April 27, 2021.
+
+GCC 11 added dedicated warnings for inconsistent array parameter declarations, 
+including declarations using `static` minimum-size bounds. This extended the 
+compiler's ability to diagnose incorrect uses of a language feature that had 
+existed since C99 [18].
+
 # SEE ALSO
 
 `c-compound-literals(7)`, `c-initialization(7)`, `c-linkage(7)`, `c-scope(7)`,
@@ -347,3 +513,46 @@ subsequent extensions of `static`:
 8. ISO/IEC, _Information technology -- Programming languages -- C_, ISO/IEC
    9899:2024. Public working draft N3220:
    https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3220.pdf
+
+9. Linux kernel developers, `include/linux/compiler_types.h`,
+   definition and documentation of the `at_least` macro.
+   https://github.com/torvalds/linux/blob/master/include/linux/compiler_types.h
+
+10. SQLite developers, `tool/mksqlite3c.tcl`, SQLite
+    amalgamation generator and `SQLITE_PRIVATE` handling.
+    https://github.com/sqlite/sqlite/blob/master/tool/mksqlite3c.tcl
+
+11. FreeBSD Project, _FreeBSD Architecture Handbook_,
+    chapter 1, _Bootstrapping and Kernel Initialization_,
+    section 1.9, _Kernel Initialization_.
+    https://docs.freebsd.org/en/books/arch-handbook/boot/
+
+12. GNU Project, _Using the GNU Compiler Collection_,
+    _Warning Options_, `-Warray-parameter`.
+    https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
+
+13. Jason A. Donenfeld, _compiler: introduce at_least
+    parameter decoration pseudo keyword_, Linux kernel
+    mailing list, November 23, 2025.
+    https://lists.openwall.net/linux-kernel/2025/11/23/61
+
+14. Jason A. Donenfeld, _wifi: iwlwifi: trans: rename
+    at_least variable to min_mode_, Linux kernel mailing
+    list, November 20, 2025.
+    https://lists.openwall.net/linux-kernel/2025/11/20/62
+
+15. SQLite developers, _SQLite Release 3.4.1_,
+    July 20, 2007.
+    https://www.sqlite.org/releaselog/3_4_1.html
+
+16. SQLite developers, _SQLite Release 3.4.2_,
+    August 13, 2007.
+    https://www.sqlite.org/releaselog/3_4_2.html
+
+17. FreeBSD Project, _SYSINIT(9) -- Kernel Developer's
+    Manual_, HISTORY and AUTHORS.
+    https://man.freebsd.org/cgi/man.cgi?query=SYSINIT&sektion=9
+
+18. GNU Project, _GCC 11 Release Series: Changes, New
+    Features, and Fixes_, C family changes.
+    https://gcc.gnu.org/gcc-11/changes.html
