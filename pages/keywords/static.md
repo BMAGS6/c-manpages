@@ -299,7 +299,6 @@ The macro is a Linux kernel convention, not an ISO C keyword or a language
 extension. The underlying array-parameter feature has been part of standard C 
 since C99 [9].
 
-
 The `at_least` macro was introduced by Jason A. Donenfeld in November 2025, 
 as part of an effort to annotate fixed-size array parameters in Linux kernel 
 cryptographic interfaces. The changes were submitted for inclusion in 
@@ -410,7 +409,7 @@ ISO C does not require implementations to diagnose every violation of the
 minimum-size contract [12].
 
 The `-Warray-parameter` diagnostic was introduced in GCC 11, first released 
-on April 27, 2021.
+on April 27th, 2021.
 
 GCC 11 added dedicated warnings for inconsistent array parameter declarations, 
 including declarations using `static` minimum-size bounds. This extended the 
@@ -451,8 +450,8 @@ which is believed to date from approximately July 1972. The compiler explicitly
 registers `static` as a keyword in `c00.c`. Its exact introduction date and
 precise early semantics are uncertain [2].
 
-Ritchie's _C Reference Manual_, dated January 15, 1974, documents `static` as a
-storage-class specifier [3]. An early edition of the manual also records
+Ritchie's _C Reference Manual_, dated January 15th, 1974, documents `static` as
+a storage-class specifier [3]. An early edition of the manual also records
 implementation differences: PDP-11 UNIX C rejected file-scope `static`
 definitions and did not support explicit initialization of local static objects,
 while GCOS C supported both [4].
@@ -467,7 +466,7 @@ subsequent extensions of `static`:
 - **circa July 1972:** Earliest surviving compiler evidence identified here;
   `static` appears in Dennis Ritchie's `last1120c` compiler, in `c00.c`, line 51
   [2].
-- **January 15, 1974:** Documented as a storage-class specifier in Ritchie's _C
+- **January 15th, 1974:** Documented as a storage-class specifier in Ritchie's _C
   Reference Manual_ [3]. Contemporary UNIX and GCOS implementations differed in
   their support for certain uses of `static` [4].
 - **1978 (K&R C):** The first edition of _The C Programming Language_ documented
