@@ -420,7 +420,7 @@ existed since C99 [18].
 # SEE ALSO
 
 `c-compound-literals(7)`, `c-initialization(7)`, `c-linkage(7)`, `c-scope(7)`,
-`c-storage-duration(7)`
+[`c-storage-duration(7)`](../concepts/storage-duration.md)
 
 # STANDARDS
 

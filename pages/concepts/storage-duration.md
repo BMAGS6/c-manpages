@@ -1845,7 +1845,7 @@ implement them.
 
 # SEE ALSO
 
-[`static` keyword](../keywords/static.md), `c-compound-literals(7)`,
+[`c-static(7)`](../keywords/static.md), `c-compound-literals(7)`,
 `c-initialization(7)`, `c-linkage(7)`, `c-scope(7)`
 
 # STANDARDS
