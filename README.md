@@ -1,14 +1,21 @@
 # C Manual Pages
 
-A collection of human-oriented Unix manual pages documenting
-the C programming language.
+**C Manual Pages** is an open-source collection of human-oriented Unix manual
+pages documenting the C programming language.
 
-The project focuses on C language syntax, semantics, keywords,
-operators, declarations, and fundamental language concepts,
-rather than the C standard library.
+The project focuses on language syntax, semantics, keywords, operators,
+declarations, and fundamental concepts rather than the C standard library.
+Alongside ISO C requirements, the manuals explore language history, practical
+examples, and noteworthy implementation practices in real-world software.
 
-Documentation is authored in Markdown and is built as traditional Unix manual
-pages or as standalone, offline-capable HTML documentation.
+Documentation is authored in Markdown and built as traditional Unix manual
+pages or standalone, offline-capable HTML documents. No JavaScript is needed
+to read the generated documentation.
+
+## Online Documentation
+
+The public website is available at **https://bmags6.github.io/c-manpages/**.
+The manuals can also be built locally for offline use.
 
 ## Language Versions
 
@@ -17,13 +24,28 @@ standards and future consideration of C29.
 
 ## Status
 
-Under development. The first reference page documents `static`.
+C Manual Pages is under **active development**. The first completed manual,
+[`c-static(7)`](https://bmags6.github.io/c-manpages/c-static.7.html), covers the
+`static` keyword, its historical development, and real-world implementation
+notes. The second manual,
+[`c-storage-duration(7)`](https://bmags6.github.io/c-manpages/c-storage-duration.7.html),
+is a work in progress.
+
+The build infrastructure supports traditional Unix manual pages, standalone
+HTML documentation, cross-references, automatically generated site navigation,
+and local previewing. The website is published automatically through GitHub Pages.
 
 ## Building the documentation
 
 Build dependencies: POSIX-compatible `make`, Python 3, `lowdown`, and `mandoc`.
 The enhanced HTML output also requires Python's `pygments` module; `man` is
 needed to open pages using `make view`.
+
+The converter must support `lowdown -t mdoc --roff-manpage`; lowdown 3.1.1 is
+known to work and is built by the GitHub Actions workflow. Some operating
+systems package older versions that do not support this option. The project
+itself uses POSIX-compatible `make`; the workflow uses `bmake` only to compile
+upstream lowdown, whose Makefile requires BSD make syntax.
 
 From the repository root, run:
 
@@ -156,10 +178,10 @@ make html
 python3 -m http.server 8000 --bind 127.0.0.1 --directory build/html
 ```
 
-Preview processes run in the foreground; **Ctrl+C** stops them. Until Phase C
-generates `index.html`, the bundled C server maps `/` to `c-static.7.html`.
-Other HTTP servers may list the directory or return 404 at `/`; in that case,
-visit `http://127.0.0.1:8000/c-static.7.html` explicitly.
+Preview processes run in the foreground; **Ctrl+C** stops them. The generated
+`index.html` is the site's homepage and is served at `/` by a typical static
+HTTP server. To open the first manual directly, visit
+`http://127.0.0.1:8000/c-static.7.html`.
 
 The bundled native server is intentionally tiny, single-threaded, blocking,
 and limited to local development. It does not implement a general-purpose web
@@ -193,8 +215,8 @@ POSIX; run the Windows recipe on Windows to validate your toolchain.
 The native server uses **blocking** sockets. The OS puts the process to sleep
 inside `accept()` when no browser is connecting; there is **no busy-waiting**,
 thread pool, or periodic timer. Active connections have 5-second socket I/O
-timeouts, plus an independent **5-second total deadline for receiving the HTTP
-request headers**. The latter prevents a client from keeping the single worker
+timeouts, plus an independent **5-second total deadline for receiving the HTTP**
+**request headers**. The latter prevents a client from keeping the single worker
 occupied indefinitely by transmitting a byte before each socket timeout.
 A monotonic clock is used so changing the system clock cannot extend this
 header deadline. File response sends remain bounded *per socket operation*;
@@ -309,3 +331,27 @@ responsive layout, system dark mode, reduced-motion and forced-colors support.
 Every generated HTML file is self-contained (including its styles) and works
 without JavaScript or an HTTP server. Any static HTTP server may be used for
 preview or publication; the bundled native C server remains optional.
+
+## Website Deployment
+
+The public documentation website is hosted on GitHub Pages. Pushing changes
+to `master` triggers the workflow in `.github/workflows/pages.yaml`, which runs
+the automated tests, validates the Unix manuals, generates `build/html/`, and
+deploys the static HTML. The workflow may also be started manually from the
+repository's GitHub Actions tab.
+
+The optional, complimentary, native C HTTP server is not used for public hosting.
+
+## License
+
+C Manual Pages is free and open-source software licensed
+under the BSD 3-Clause License.
+
+See [LICENSE.md](LICENSE.md) for the complete license text.
+
+## Contributing
+
+The project is currently developed and maintained by its
+original author. External contributions are not being
+accepted at this time, although the source code remains
+publicly available under its license.
