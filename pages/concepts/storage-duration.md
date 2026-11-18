@@ -1010,7 +1010,7 @@ The standard library also provides `calloc()`, which initializes all bits of the
 allocated storage to zero.
 
 However, an all-bits-zero representation is not necessarily equivalent to the
-zero value of every C type. In particular, ISO C does not require the 
+zero value of every C type. In particular, ISO C does not require the
 all-bits-zero representation to designate a null pointer
 or a floating-point zero.
 
@@ -1060,11 +1060,11 @@ The `malloc()` function returns a pointer of type `void*`, which C implicitly
 converts to a pointer to an object type when required.
 
 An explicit cast, such as `(int*)malloc(sizeof(int))`, is therefore
-unnecessary in C, though it is commonly seen. Such a cast does not change the 
-allocated object's storage duration, declared-type status, or effective-type 
+unnecessary in C, though it is commonly seen. Such a cast does not change the
+allocated object's storage duration, declared-type status, or effective-type
 rules.
 
-C++ has different implicit pointer-conversion rules and requires an explicit 
+C++ has different implicit pointer-conversion rules and requires an explicit
 conversion in this situation.
 
 ### Deallocation and End of Lifetime
