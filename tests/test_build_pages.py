@@ -44,10 +44,13 @@ class BuildTests(unittest.TestCase):
             "XREFS": self.root / "tools" / "xrefs.py",
             "HTML_TEMPLATE": self.root / "templates" / "page.html",
             "SITE_CSS": self.root / "assets" / "site.css",
+            "SITE_LOGO": self.root / "assets" / "c-logo.svg",
             "SITE_NAVIGATION": self.root / "tools" / "site_navigation.py",
             "INDEX_TEMPLATE": self.root / "templates" / "index.html",
             "SITE_CATALOG": self.root / "build" / "site-catalog.json",
             "SITE_INDEX": self.root / "build" / "html" / "index.html",
+            "SITE_LOGO_OUTPUT": self.root / "build" / "html" / "c-logo.svg",
+            "INDEX_SUMMARIES": self.root / "build" / "index-summaries.json",
         }
         previous = {key: getattr(build_pages, key) for key in replacements}
         for key, value in replacements.items():
@@ -62,6 +65,7 @@ class BuildTests(unittest.TestCase):
             "tools/build_pages.py", "tools/build_html.py", "tools/highlight_html.py",
             "tools/xrefs.py", "tools/site_navigation.py",
             "templates/page.html", "templates/index.html", "assets/site.css",
+            "assets/c-logo.svg",
         ):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -256,7 +260,8 @@ class BuildTests(unittest.TestCase):
             builder.build_html()
         output = (self.root / "build/html/c-static.7.html").read_text()
         self.assertEqual(output.count('<h1 class="page-title">'), 1)
-        self.assertIn('<h2 id="name">NAME</h2>', output)
+        self.assertIn('<h2 id="name">NAME', output)
+        self.assertIn('class="heading-permalink" href="#name"', output)
         self.assertIn('aria-label="Manual pages"', output)
         self.assertIn('aria-label="On this page"', output)
         self.assertIn('href="#main-content"', output)

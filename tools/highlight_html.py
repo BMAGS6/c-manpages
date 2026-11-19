@@ -34,7 +34,7 @@ def highlight_code_block(match):
     markup = highlight(source, lexer, HtmlFormatter(nowrap=True))
 
     return (
-        f'<pre class="highlight"><code class="language-{language}">'
+        f'<pre class="highlight" data-language="{language}"><code class="language-{language}">'
         f'{markup}</code></pre>'
     )
 
