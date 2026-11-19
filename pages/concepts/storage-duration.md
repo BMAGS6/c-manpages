@@ -1096,6 +1096,10 @@ void example(void)
 After `free()` deallocates the storage, the object formerly designated by
 `ptr_to_int` no longer exists.
 
+Passing a null pointer to `free()` has no effect. This differs
+from passing a non-null pointer to storage that has already been
+deallocated, which results in undefined behavior.
+
 The pointer variable itself continues to exist until its own lifetime ends.
 However, the old pointer value designating the deallocated object can no longer
 be used.
@@ -1191,6 +1195,13 @@ zero has undefined behavior.
 The **essential lifetime rule** is that successful reallocation does not extend
 the lifetime of the original object; it ends that lifetime and begins another.
 
+When the pointer argument is null, `realloc()` behaves like
+`malloc()` for the requested size.
+
+Consequently, `realloc(NULL, 0)` follows the implementation-defined
+rules for zero-size allocation, while `realloc(ptr, 0)` with a
+non-null pointer has undefined behavior in C23.
+
 ### Alignment and Allocation Requirements
 
 Allocated storage must satisfy the alignment requirements applicable to the
@@ -1248,9 +1259,23 @@ An allocated object must not be accessed outside its lifetime.
 The end of an object's lifetime also invalidates the use of pointer values
 designating that object.
 
-C23 additionally introduced `free_sized()` and `free_aligned_sized()`, which
-permit deallocation using information about the allocation's requested size
-and, where applicable, its requested alignment.
+C23 additionally introduced `free_sized()` and `free_aligned_sized()`,
+which permit deallocation using information about the allocation's
+requested size and, where applicable, its requested alignment.
+
+The `free_sized()` function accepts a null pointer or a pointer returned by
+`malloc()`, `calloc()`, or `realloc()`, together with the corresponding
+requested allocation size.
+
+The `free_aligned_sized()` function accepts a null pointer or a
+pointer returned by `aligned_alloc()`, together with the corresponding
+requested alignment and allocation size.
+
+Passing an incompatible pointer, size, or alignment results in
+undefined behavior.
+
+These facilities do not introduce another storage duration or change the
+fundamental lifetime rules for allocated objects.
 
 These facilities have additional argument requirements, but do not introduce a
 new storage duration or change the fundamental rules governing allocated object
