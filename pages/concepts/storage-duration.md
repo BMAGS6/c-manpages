@@ -1284,7 +1284,6 @@ The term **heap** is commonly used to describe dynamically managed storage,
 but the C standard's guarantees concern allocated objects and their lifetimes,
 not a particular hardware or operating-system memory organization.
 
-
 # GENERAL OBJECT LIFETIME RULES
 
 Although C defines four distinct storage durations, several fundamental rules
@@ -1894,14 +1893,18 @@ implement them.
 The rules governing object storage duration and lifetime are specified
 by ANSI C89 and subsequent C standards.
 
-The original standardized storage-duration model included automatic,
-static, and allocated storage duration. Later revisions introduced
-additional lifetime rules and storage-duration facilities.
+As originally published, C89/C90 explicitly identified automatic and
+static storage duration, while standardizing dynamic memory allocation
+through the library. Technical Corrigendum 2 to C90 (1996) explicitly
+recognized allocated storage duration as a third category [12].
+Later revisions introduced additional lifetime rules and facilities.
 
 The following revisions are particularly relevant:
 
-- **C89/C90:** Standardized automatic, static, and allocated storage
-  duration and their associated object-lifetime rules.
+- **C89/C90:** Standardized automatic and static storage duration,
+  together with dynamic memory allocation through the standard library.
+  Technical Corrigendum 2 (1996) explicitly recognized allocated
+  storage duration as a third category [12].
 - **C99:** Introduced variable-length arrays and compound literals,
   including their associated storage-duration and lifetime rules.
 - **C11:** Introduced thread storage duration through `_Thread_local`,
@@ -1939,18 +1942,18 @@ During the 1950s, list-processing languages helped establish dynamic
 storage management as an important programming technique. The
 Information Processing Language (IPL), developed by Allen Newell,
 Cliff Shaw, and Herbert Simon, employed dynamically managed list
-structures for symbolic computation [12].
+structures for symbolic computation [13].
 
 John McCarthy's Lisp, developed from 1958 onward, further advanced
 list processing and incorporated automatic storage reclamation through
 garbage collection. Unlike C's explicit allocation and deallocation
 model, this allowed the runtime to reclaim certain objects that were
-no longer accessible to the program [12].
+no longer accessible to the program [13].
 
 ALGOL 60 introduced influential rules for block-structured
 declarations and recursive procedures. It also included the `own`
 declaration modifier, which preserved a variable's value across
-successive executions of its associated block [13].
+successive executions of its associated block [14].
 
 Although their semantics were not identical, these earlier facilities
 demonstrate that automatic storage, persistent local objects, and
@@ -1965,14 +1968,14 @@ January 7th, 1972, described three storage classes: automatic,
 external, and internal. Automatic storage was allocated for each
 function invocation, while external storage existed before program
 execution. Internal storage was associated with a function and
-persisted across its invocations [14].
+persisted across its invocations [15].
 
 Dennis Ritchie's _C Reference Manual_, dated January 15th, 1974,
 documented four declarable storage classes: automatic, static,
 external, and register. Automatic and register variables had lifetimes
 associated with function invocations, while static variables retained
 their values between calls. External variables existed independently
-of individual functions [15].
+of individual functions [16].
 
 These historical storage classes should not be confused with the four
 storage durations defined by modern ISO C. In particular, `extern`
@@ -1989,29 +1992,29 @@ documents `alloc()` and `free()` in an entry dated March 1st, 1974.
 The `alloc()` function accepted a requested size in bytes and returned
 a pointer to a suitably aligned region of storage. Its companion
 `free()` function made previously allocated storage available for
-reuse [16].
+reuse [17].
 
 The allocator employed a first-fit allocation strategy, coalescing
 adjacent free blocks and requesting additional memory from UNIX
 through `sbrk()` when necessary. If additional storage could not
 be obtained, the documented implementation printed an error message
-and terminated execution [16].
+and terminated execution [17].
 
 By Seventh Edition UNIX in 1979, the library documented the now
 familiar `malloc()`, `calloc()`, `realloc()`, and `free()` interfaces.
 Its allocator continued to use a circular first-fit strategy and
-obtained additional storage through `sbrk()` [17].
+obtained additional storage through `sbrk()` [18].
 
 The surviving Seventh Edition implementation also illustrates the
 relationship between language-level allocation and operating-system
 memory management. The allocator maintained its own bookkeeping for
 allocated and free blocks, while relying on UNIX to expand the memory
-available to the process [18].
+available to the process [19].
 
 Historical allocation behavior was not identical to that required
 by modern ISO C. Seventh Edition UNIX permitted certain uses of
 `realloc()` on recently freed blocks and warned that a failed
-reallocation might destroy the original block [17].
+reallocation might destroy the original block [18].
 
 Under modern ISO C, calling `realloc()` with a pointer to previously
 deallocated storage has undefined behavior. Furthermore, when an
@@ -2023,27 +2026,32 @@ remains intact.
 Looking back on C's development in April 1993, Dennis Ritchie
 distinguished the language's two directly expressed storage durations,
 automatic and static, from dynamically allocated storage provided
-through library routines [19].
+through library routines [20].
 
 The first standardized C language, ANSI X3.159-1989 (C89), and its
-international successor ISO/IEC 9899:1990 (C90), formally classified
-automatic, static, and allocated storage as three storage durations.
-Later revisions extended this model to account for additional kinds
-of objects and execution contexts [20].
+international successor ISO/IEC 9899:1990 (C90), originally identified
+automatic and static storage as two storage durations. Dynamic memory
+allocation was provided through standardized library functions, but
+allocated storage was not initially named as a third storage duration.
+
+Following WG14 Defect Report #138, Technical Corrigendum 2 to C90
+(1996) explicitly recognized allocated storage duration. C99 retained
+this three-duration model, and C11 subsequently introduced thread
+storage duration as a fourth category [12, 21].
 
 C99 introduced variable-length arrays and compound literals. These
 features extended the lifetime rules for automatic objects and provided
-a standardized means of creating unnamed objects through expressions [20].
+a standardized means of creating unnamed objects through expressions [21].
 
 C11 introduced thread storage duration through `_Thread_local`,
 establishing a distinct object instance for each thread. It also
 introduced the temporary-lifetime rules for certain structure and
-union expressions, as well as `aligned_alloc()` [20, 21].
+union expressions, as well as `aligned_alloc()` [21, 22].
 
 C23 retained the four storage durations while extending the ways
 storage duration can be specified. It introduced `thread_local` as
 a keyword, allowed storage-class specifiers in compound literals,
-and introduced `constexpr` and new deallocation facilities [20, 22].
+and introduced `constexpr` and new deallocation facilities [21, 23].
 
 ## Chronology and Milestones
 
@@ -2051,41 +2059,41 @@ The following milestones summarize the development of object storage
 duration and how it relates to C:
 
 - **1956:** Newell, Shaw, and Simon's IPL work demonstrates
-  dynamically managed list structures for symbolic computation [12].
+  dynamically managed list structures for symbolic computation [13].
 - **1958--1960:** Lisp development establishes influential mechanisms
-  for dynamic list allocation and automatic storage reclamation [12].
+  for dynamic list allocation and automatic storage reclamation [13].
 - **1960 (ALGOL 60):** Formalizes block-structured variable declarations
-  and includes the `own` modifier for persistent local values [13].
+  and includes the `own` modifier for persistent local values [14].
 - **1969--1970:** Ken Thompson develops B from Martin Richards's
-  BCPL, establishing the immediate predecessor of C [19].
+  BCPL, establishing the immediate predecessor of C [20].
 - **1971--1973:** Dennis Ritchie develops C from B, introducing
-  types and other language features [19].
+  types and other language features [20].
 - **January 7th, 1972:** Thompson's B reference manual documents
-  automatic, external, and internal storage classes [14].
+  automatic, external, and internal storage classes [15].
 - **January 15th, 1974:** Ritchie's C Reference Manual documents
-  automatic, static, external, and register storage classes [15].
+  automatic, static, external, and register storage classes [16].
 - **March 1st, 1974:** The date of the `alloc(III)` entry preserved
-  in the Fifth Edition UNIX Programmer's Manual [16].
+  in the Fifth Edition UNIX Programmer's Manual [17].
 - **1978:** Kernighan and Ritchie publish the first edition of
-  _The C Programming Language_ [23].
+  _The C Programming Language_ [24].
 - **1979 (Seventh Edition UNIX):** Documents `malloc()`, `calloc()`,
   `realloc()`, and `free()`, with an allocator based on circular
-  first-fit searching and `sbrk()` [17, 18].
-- **C89/C90:** Standardized automatic and static storage duration,
-  together with dynamic memory allocation through the standard library.
-  Technical Corrigendum 2 (1996) explicitly recognized allocated
-  storage duration as a third category.
+  first-fit searching and `sbrk()` [18, 19].
+- **1989/1990 (C89/C90):** Standardizes automatic and static storage
+  duration and dynamic allocation through the standard library [12, 21].
+- **1996 (C90 TC2):** Explicitly recognizes allocated storage duration
+  as a third category [12].
 - **1999 (C99):** Introduces variable-length arrays and compound
-  literals, extending the rules for object lifetime [20].
+  literals, extending the rules for object lifetime [21].
 - **May 14th, 2003 (GCC 3.3):** Adds thread-local storage support for
   IA-32 and x86-64, illustrating implementation support for per-thread
   objects before their standardization in C11 [7].
 - **2011 (C11):** Introduces thread storage duration, temporary
-  lifetime, and aligned allocation [20, 21].
+  lifetime, and aligned allocation [21, 22].
 - **2018 (C17):** Retains the four-duration model without introducing
-  another storage-duration category [20].
+  another storage-duration category [21].
 - **2024 (C23):** Introduces `thread_local`, storage-class specifiers
-  in compound literals, `constexpr`, and sized deallocation [20, 22].
+  in compound literals, `constexpr`, and sized deallocation [21, 23].
 
 # REFERENCES
 
@@ -2128,50 +2136,54 @@ duration and how it relates to C:
 
 11. Doug Lea, _A Memory Allocator_, historical description of
     the development of dlmalloc, beginning in 1987.
-    https://www.cs.princeton.edu/courses/archive/fall19/cos217/asgts/06heapmgr/LeaMalloc.html
+    https://gee.cs.oswego.edu/dl/html/malloc.html
 
-12. John McCarthy, _History of Lisp_, ACM SIGPLAN Notices,
+12. ISO/IEC JTC 1/SC 22/WG14, _ISO/IEC 9899:1990,
+    Technical Corrigendum 2_, 1996, section 6.1.2.4.
+    https://www.open-std.org/JTC1/SC22/WG14/www/docs/tc2.htm
+
+13. John McCarthy, _History of Lisp_, ACM SIGPLAN Notices,
     volume 13, number 8, August 1978.
     https://pages.cs.wisc.edu/~horwitz/CS704-NOTES/PAPERS/mccarthy.pdf
 
-13. Peter Naur et al., _Revised Report on the Algorithmic Language
+14. Peter Naur et al., _Revised Report on the Algorithmic Language
     ALGOL 60_, 1963, particularly section 5, _Declarations_.
     https://www.masswerk.at/algol60/report.htm
 
-14. Ken Thompson, _Users' Reference to B_, Bell Laboratories,
+15. Ken Thompson, _Users' Reference to B_, Bell Laboratories,
     January 7, 1972.
     https://cm-bell-labs.github.io/who/dmr/kbman.html
 
-15. Dennis M. Ritchie, _C Reference Manual_, Bell Laboratories
+16. Dennis M. Ritchie, _C Reference Manual_, Bell Laboratories
     Technical Memorandum 74-1273-1, January 15, 1974.
     https://cm-bell-labs.github.io/who/dmr/cman74.pdf
 
-16. Bell Laboratories, _UNIX Programmer's Manual_, Fifth Edition,
+17. Bell Laboratories, _UNIX Programmer's Manual_, Fifth Edition,
     `alloc(III)`, entry dated March 1, 1974; manual published June 1974.
     https://ftp.icm.edu.pl/packages/UnixArchive/Distributions/Research/Dennis_v5/v5man.pdf
 
-17. Bell Laboratories, _UNIX Programmer's Manual_, Seventh Edition,
+18. Bell Laboratories, _UNIX Programmer's Manual_, Seventh Edition,
     `malloc(3)`, January 1979.
     https://www.retro11.de/ouxr/u7ed/usr/man/man3/malloc.3
     Alternative archive: https://www.unix.com/man-page/v7/3/malloc/
 
-18. Bell Laboratories, Seventh Edition UNIX source,
+19. Bell Laboratories, Seventh Edition UNIX source,
     `usr/src/libc/gen/malloc.c`, January 1979.
     https://www.retro11.de/ouxr/u7ed/usr/src/libc/gen/malloc.c.html
 
-19. Dennis M. Ritchie, _The Development of the C Language_,
+20. Dennis M. Ritchie, _The Development of the C Language_,
     Second History of Programming Languages Conference, 1993.
     https://cm-bell-labs.github.io/who/dmr/chist.html
 
-20. ISO/IEC JTC1/SC22/WG14, _Project Status and Milestones_,
+21. ISO/IEC JTC1/SC22/WG14, _Project Status and Milestones_,
     history of published C language standards.
     https://www.open-std.org/jtc1/sc22/wg14/www/projects.html
 
-21. ISO/IEC JTC1/SC22/WG14, _Programming Languages -- C_,
+22. ISO/IEC JTC1/SC22/WG14, _Programming Languages -- C_,
     Committee Draft N1570, April 2011 (C11).
     https://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf
 
-22. ISO/IEC, _Information technology -- Programming languages -- C_,
+23. ISO/IEC, _Information technology -- Programming languages -- C_,
     ISO/IEC 9899:2024 (C23).
     https://www.iso.org/standard/82075.html
 
@@ -2179,6 +2191,6 @@ duration and how it relates to C:
     February 22, 2024 (early C2y draft).
     https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3220.pdf
 
-23. Brian W. Kernighan and Dennis M. Ritchie,
+24. Brian W. Kernighan and Dennis M. Ritchie,
     _The C Programming Language_, first edition,
     Prentice-Hall, 1978.
