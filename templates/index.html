@@ -18,7 +18,13 @@ ${site_css}
 <div class="site-layout">
     <aside class="site-sidebar" aria-label="Documentation navigation">
         <div class="sidebar-sticky">
-            ${navigation}
+            <div class="desktop-sidebar">${navigation}</div>
+            <div class="mobile-sidebar">
+                <details class="mobile-disclosure">
+                    <summary>Browse manuals</summary>
+                    ${mobile_navigation}
+                </details>
+            </div>
         </div>
     </aside>
     <main id="main-content" class="site-content">

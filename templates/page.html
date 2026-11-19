@@ -19,22 +19,42 @@ ${site_css}
 <div class="site-layout">
     <aside class="site-sidebar" aria-label="Documentation navigation">
         <div class="sidebar-sticky">
-            ${navigation}
-            <nav class="page-toc" aria-label="On this page">
-                <h2 class="sidebar-heading">ON THIS PAGE</h2>
-                <ul class="toc-list">
-                    ${toc}
-                </ul>
-            </nav>
+            <div class="desktop-sidebar">
+                ${navigation}
+                <nav class="page-toc" aria-label="On this page">
+                    <h2 class="sidebar-heading">ON THIS PAGE</h2>
+                    <ul class="toc-list">${toc}</ul>
+                </nav>
+            </div>
+            <div class="mobile-sidebar">
+                <details class="mobile-disclosure">
+                    <summary>Browse manuals</summary>
+                    ${mobile_navigation}
+                </details>
+                <details class="mobile-disclosure">
+                    <summary>On this page</summary>
+                    <nav class="page-toc" aria-label="On this page (mobile)">
+                        <ul class="toc-list">${toc}</ul>
+                    </nav>
+                </details>
+            </div>
         </div>
     </aside>
     <main id="main-content" class="site-content">
+        <nav class="breadcrumbs" aria-label="Breadcrumbs">
+            <a href="index.html">Manuals</a>
+            <span aria-hidden="true">/</span>
+            <span>${category}</span>
+            <span aria-hidden="true">/</span>
+            <span aria-current="page">${manual_name}</span>
+        </nav>
         <div class="page-eyebrow">${category}</div>
         <h1 class="page-title"><code>${page_name}</code></h1>
         <p class="page-subtitle">${manual_name}</p>
         <article class="manual-content">
             ${body}
         </article>
+        ${adjacent_links}
         <footer class="page-footer">Generated from Markdown · C Manual Pages</footer>
     </main>
 </div>

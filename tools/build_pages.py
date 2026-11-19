@@ -376,6 +376,7 @@ class Builder:
         rendered = template.substitute(
             site_css=SITE_CSS.read_text(encoding="utf-8"),
             navigation=render_navigation(catalog),
+            mobile_navigation=render_navigation(catalog, id_prefix="mobile-nav-group"),
             categories=render_index_categories(catalog),
             page_count=str(len(catalog)),
         )

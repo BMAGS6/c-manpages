@@ -78,7 +78,7 @@ def grouped_catalog(catalog):
     return groups.items()
 
 
-def render_navigation(catalog, current_page=None):
+def render_navigation(catalog, current_page=None, *, id_prefix="site-nav-group"):
     """Render the site-wide navigation used by every generated HTML document.
 
     Links are relative filenames because all enhanced HTML pages live together
@@ -98,7 +98,7 @@ def render_navigation(catalog, current_page=None):
     for group_number, (category, entries) in enumerate(grouped_catalog(catalog)):
         # Numeric group IDs cannot collide even if category directory names
         # normalize to the same text (e.g. different punctuation/spelling).
-        heading_id = f"site-nav-group-{group_number}"
+        heading_id = f"{id_prefix}-{group_number}"
         parts.append(
             f'    <section class="nav-group" aria-labelledby="{html.escape(heading_id, quote=True)}">'
         )
@@ -146,4 +146,31 @@ def render_index_categories(catalog):
             )
         parts.append('    </ul>')
         parts.append('</section>')
+    return "\n".join(parts)
+
+
+def render_adjacent_links(catalog, current_page):
+    """Produce previous/next links from the generated site-wide page order."""
+    position = next(
+        (i for i, entry in enumerate(catalog) if entry["name"] == current_page),
+        None,
+    )
+    if position is None or len(catalog) < 2:
+        return ""
+
+    def link(entry, direction, label):
+        href = html.escape(page_href(entry), quote=True)
+        name = html.escape(page_label(entry))
+        return (
+            f'<a class="neighbor neighbor-{direction}" href="{href}" rel="{direction}">'
+            f'<span class="neighbor-label">{label}</span>'
+            f'<strong>{name}</strong></a>'
+        )
+
+    parts = ['<nav class="page-neighbors" aria-label="Other manual pages">']
+    if position > 0:
+        parts.append(link(catalog[position - 1], "prev", "← Previous manual"))
+    if position + 1 < len(catalog):
+        parts.append(link(catalog[position + 1], "next", "Next manual →"))
+    parts.append('</nav>')
     return "\n".join(parts)
