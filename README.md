@@ -20,16 +20,16 @@ The manuals can also be built locally for offline use.
 ## Language Versions
 
 The primary target is C23, with historical coverage of earlier
-standards and future consideration of C29.
+standards and future consideration of C29 and beyond.
 
 ## Status
 
-C Manual Pages is under **active development**. The first completed manual,
-[`c-static(7)`](https://bmags6.github.io/c-manpages/c-static.7.html), covers the
-`static` keyword, its historical development, and real-world implementation
-notes. The second manual,
+C Manual Pages is under **active development**.
+
+The manpages 
+[`c-static(7)`](https://bmags6.github.io/c-manpages/c-static.7.html) and
 [`c-storage-duration(7)`](https://bmags6.github.io/c-manpages/c-storage-duration.7.html),
-is a work in progress.
+are complete.
 
 The build infrastructure supports traditional Unix manual pages, standalone
 HTML documentation, cross-references, automatically generated site navigation,
