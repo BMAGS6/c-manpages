@@ -1056,16 +1056,61 @@ Storage duration determines when an object exists, while effective type
 constrains the types of expressions through which its stored value may be
 accessed.
 
-The `malloc()` function returns a pointer of type `void*`, which C implicitly
-converts to a pointer to an object type when required.
+The `malloc()` function, declared in `<stdlib.h>`, returns a pointer of
+type `void *`. In C, this pointer can be implicitly converted to a pointer
+to an object type when required.
 
-An explicit cast, such as `(int*)malloc(sizeof(int))`, is therefore
-unnecessary in C, though it is commonly seen. Such a cast does not change the
-allocated object's storage duration, declared-type status, or effective-type
-rules.
+An explicit cast, such as `(int *)malloc(sizeof(int))`, is therefore
+unnecessary in C, although it is commonly seen. Such a cast does not
+change the allocated object's storage duration, declared-type status,
+or effective-type rules.
 
-C++ has different implicit pointer-conversion rules and requires an explicit
-conversion in this situation.
+```c
+#include <stdlib.h>
+
+/* Correct C: no explicit cast required. */
+int* values = malloc(10 * sizeof *values);
+```
+
+C++ has different implicit pointer-conversion rules and does not permit
+the implicit conversion of `void *` to other object pointer types. An
+explicit conversion is therefore required when using `malloc()` in C++.
+This is one reason casts sometimes appear in code intended for both
+languages, although casting alone does not guarantee C++ compatibility.
+
+Historically, casting the result of `malloc()` in C could also conceal
+a missing function declaration.
+
+C89/C90 permitted **implicit function declarations**. When a function
+was called without a visible declaration, the language implicitly
+declared it as though the following declaration had appeared:
+
+```c
+extern int function();
+```
+
+The function was therefore assumed to return `int`, while its parameter
+types remained unspecified. Arguments underwent the **default argument
+promotions**, rather than all being converted to `int`.
+
+If `malloc()` was called without including `<stdlib.h>` or otherwise
+providing a compatible declaration, the compiler could incorrectly (yet legally)
+assume that it returned `int`, rather than `void *`.
+
+This mismatch could result in undefined behavior, particularly on
+implementations where pointers were wider than `int`. An explicit cast
+to the desired pointer type did not correct the incompatible function
+declaration and could conceal certain compiler diagnostics.
+
+C99 removed implicit function declarations, although some implementations
+continued to support them as extensions. GCC only threw warnings up until
+version 14 (released May 7th, 2024). Thenceforth, a compilation error is
+triggered.
+
+Consequently, a C program should include the approriate header file, 
+`<stdlib.h>` (or the non-standard `<malloc.h>`), before calling `malloc()`.
+An explicit pointer cast is **not a substitute** for a correct
+function declaration.
 
 ### Deallocation and End of Lifetime
 
@@ -1343,6 +1388,17 @@ This means that pointers to the same object, obtained at different times during
 that lifetime, compare equal.
 
 The object's address remains constant even if its stored value changes.
+
+The constant-address guarantee concerns the identity of an object
+within the C abstract machine. Copying an object's stored value or
+representation into storage occupied by another object does not
+relocate the original object; the destination remains a distinct
+object with its own lifetime and address.
+
+An implementation may internally relocate or reorganize the physical
+storage used to represent an object, provided that the observable
+behavior of the program remains consistent with the language's
+requirements, including the object's constant address.
 
 An object also retains its last-stored value throughout its lifetime until that
 value is changed by a subsequent store. For a `volatile` object, the last store
