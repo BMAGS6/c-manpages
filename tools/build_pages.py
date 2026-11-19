@@ -42,8 +42,10 @@ HTML_TEMPLATE = ROOT / "templates" / "page.html"
 SITE_CSS = ROOT / "assets" / "site.css"
 SITE_NAVIGATION = ROOT / "tools" / "site_navigation.py"
 INDEX_TEMPLATE = ROOT / "templates" / "index.html"
+SITE_LOGO = ROOT / "assets" / "c-logo.svg"
 SITE_CATALOG = BUILD_DIR / "site-catalog.json"
 SITE_INDEX = BUILD_DIR / "html" / "index.html"
+SITE_LOGO_OUTPUT = BUILD_DIR / "html" / "c-logo.svg"
 INDEX_SUMMARIES = BUILD_DIR / "index-summaries.json"
 
 # Restrict page filenames to predictable, portable Unix-man identifiers.
@@ -471,6 +473,13 @@ class Builder:
             self.publish(page, "html", page.html_path, final, targets)
             print(f"HTML  {page.html_path.relative_to(ROOT)}")
         self.build_site_index(catalog)
+        # Keep the image beside generated HTML, including incremental builds.
+        # The same local SVG serves the homepage artwork and every favicon.
+        if not SITE_LOGO.is_file():
+            raise BuildError(f"missing build input: {SITE_LOGO}")
+        if needs_build(SITE_LOGO_OUTPUT, (SITE_LOGO,)):
+            copy_atomic(SITE_LOGO, SITE_LOGO_OUTPUT)
+            print(f"ASSET {SITE_LOGO_OUTPUT.relative_to(ROOT)}")
 
     def lint(self, strict=False):
         """Check every manual, retaining the previous strict/non-strict modes.

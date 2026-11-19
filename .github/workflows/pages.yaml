@@ -58,8 +58,10 @@ jobs:
       - name: Generate HTML documentation
         run: make html
 
-      - name: Verify website entry point
-        run: test -s build/html/index.html
+      - name: Verify website entry point and logo
+        run: |
+          test -s build/html/index.html
+          test -s build/html/c-logo.svg
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

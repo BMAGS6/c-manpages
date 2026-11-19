@@ -349,16 +349,12 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
     background: var(--surface);
     overflow: hidden;
 }
-.home-mark-letter {
-    /* Local Helvetica-style faces only; no downloaded fonts. */
-    font-family: "Helvetica Neue", Helvetica, "Nimbus Sans",
-                 "Liberation Sans", Arial, sans-serif;
-    font-size: clamp(8rem, 16vw, 11rem);
-    font-weight: 900;
-    line-height: 1;
-    letter-spacing: -.12em;
-    color: #B0C4DE; /* LightSteelBlue */
-    transform: translateX(-.05em);
+.home-mark-logo {
+    display: block;
+    width: min(82%, 160px);
+    height: auto;
+    max-height: 180px;
+    object-fit: contain;
 }
 .home-mark-caption {
     position: absolute;
@@ -450,4 +446,58 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media print {
     .home-actions, .home-mark { display: none; }
     .index-card { break-inside: avoid; }
+}
+
+
+/* Phase 2B: long-form reading and language-labelled source examples. */
+.manual-content > :is(p, ul, ol, blockquote) {
+    max-width: 76ch;
+}
+.manual-content :is(h2, h3, h4) {
+    text-wrap: balance;
+}
+.manual-content pre {
+    overscroll-behavior-x: contain;
+}
+.manual-content pre code {
+    /* Operators must remain visually distinct in programming examples. */
+    font-variant-ligatures: none;
+}
+.manual-content pre.highlight {
+    position: relative;
+    padding-top: 1.75rem;
+}
+.manual-content pre.highlight[data-language]::before {
+    content: attr(data-language);
+    position: absolute;
+    top: .85rem;
+    right: 1.2rem;
+    color: var(--muted);
+    font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: .72rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+}
+.manual-content table {
+    max-width: 100%;
+    margin: 18px 0 24px;
+}
+.manual-content th { text-align: left; }
+.manual-content tbody tr:nth-child(even) { background: var(--surface); }
+.manual-content blockquote {
+    border-left-color: var(--accent);
+    border-radius: 0 6px 6px 0;
+    background: var(--surface);
+    padding: 12px 18px;
+}
+@media (max-width: 650px) {
+    .manual-content pre { padding-inline: 15px; }
+    .manual-content pre.highlight[data-language]::before { right: 15px; }
+}
+@media print {
+    .manual-content pre.highlight[data-language]::before { display: none; }
+    .manual-content pre.highlight { padding-top: 17px; }
+    .manual-content blockquote { background: transparent; }
 }
