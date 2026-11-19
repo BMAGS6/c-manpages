@@ -1068,8 +1068,19 @@ or effective-type rules.
 ```c
 #include <stdlib.h>
 
-/* Correct C: no explicit cast required. */
-int* values = malloc(10 * sizeof *values);
+int example(void)
+{
+    /* Correct C: no explicit cast required. */
+    int* values = malloc(10 * sizeof *values);
+
+    if (values == NULL)
+        return EXIT_FAILURE;
+
+    /* Use values here... */
+
+    free(values);
+    return EXIT_SUCCESS;
+}
 ```
 
 C++ has different implicit pointer-conversion rules and does not permit
@@ -1103,12 +1114,20 @@ to the desired pointer type did not correct the incompatible function
 declaration and could conceal certain compiler diagnostics.
 
 C99 removed implicit function declarations, although some implementations
-continued to support them as extensions. GCC only threw warnings up until
-version 14 (released May 7th, 2024). Thenceforth, a compilation error is
-triggered.
+continued to support them as extensions.
 
-Consequently, a C program should include the approriate header file, 
-`<stdlib.h>` (or the non-standard `<malloc.h>`), before calling `malloc()`.
+Starting with GCC 14, first released on May 7th, 2024, implicit
+function declarations are diagnosed as errors by default in C99
+and later language modes, rather than merely as warnings.
+
+Compiler options can downgrade this diagnostic, but doing so does
+not make implicit function declarations valid ISO C99 or later.
+
+Consequently, a conforming C program should include `<stdlib.h>`
+before calling `malloc()`. Some implementations also provide the
+non-standard `<malloc.h>` header, but its availability and contents
+are not guaranteed by ISO C.
+
 An explicit pointer cast is **not a substitute** for a correct
 function declaration.
 
