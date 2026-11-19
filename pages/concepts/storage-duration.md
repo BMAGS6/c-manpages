@@ -1277,10 +1277,6 @@ undefined behavior.
 These facilities do not introduce another storage duration or change the
 fundamental lifetime rules for allocated objects.
 
-These facilities have additional argument requirements, but do not introduce a
-new storage duration or change the fundamental rules governing allocated object
-lifetimes.
-
 Finally, ISO C does not mandate a particular allocator implementation,
 memory-region layout, or underlying operating-system mechanism.
 
@@ -1513,13 +1509,19 @@ as an extension.
 
 ## Storage-Class Specifiers
 
-At most one storage-class specifier may ordinarily appear in the declaration
-specifiers of a declaration.
 
-C23 permits certain combinations, including `thread_local` with either `static`
-or `extern`, and `constexpr` with `static`. Additional combinations involving
-`auto` and `constexpr` are subject to the language's type-inference and
-declaration rules.
+At most one storage-class specifier may ordinarily appear in the
+declaration specifiers of a declaration.
+
+C23 permits the following exceptions:
+
+- `thread_local` may appear with `static` or `extern`.
+- `auto` may appear with any other storage-class specifier except `typedef`.
+- `constexpr` may appear with `auto`, `register`, or `static`.
+
+These combinations remain subject to the other applicable
+declaration constraints, including the rules governing type
+inference with `auto` and initialization with `constexpr`.
 
 Since C11, an object declared with thread storage duration at block scope must
 also be declared with `static` or `extern`.
@@ -1586,8 +1588,22 @@ therefore, subject to different storage-duration restrictions.
 Whenever a variable-length array bound is evaluated, its value *must* be
 greater than zero.
 
-The language also prohibits jumping from outside the scope of an identifier
-having a variably modified type into that scope.
+Since C23, an object of variable-length array type may be
+initialized with an empty initializer (`{}`), which requests
+default initialization of its elements.
+
+Other forms of initialization remain prohibited for objects of
+variable-length array type.
+
+Earlier C standards did not permit initialization of
+variable-length array objects.
+
+A `goto` statement must not jump from outside the scope of an
+identifier having a variably modified type into that scope.
+
+Likewise, if a `case` or `default` label of a `switch` statement
+appears within such a scope, the entire `switch` statement must
+be within that scope.
 
 Note that support for variable-length arrays with automatic storage duration
 is a **conditional feature** in C11 and later. An implementation may
