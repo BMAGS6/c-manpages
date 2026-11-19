@@ -57,9 +57,9 @@ For the related storage-class specifier, see the
 ## Automatic Storage Duration
 
 An object has **automatic storage duration** when its identifier is declared
-with no linkage and without the `static` storage-class specifier, subject to
-the rules for compound literals and other special cases. Function parameters
-and ordinary block-scope objects without `static`, `extern`,
+with no linkage and without the [`static`](../keywords/static.md) storage-class
+specifier, subject to the rules for compound literals and other special cases.
+Function parameters and ordinary block-scope objects without `static`, `extern`,
 or thread-storage specifiers are common examples.
 
 Function parameters *always* have automatic storage duration. The only
@@ -272,8 +272,8 @@ object with its own storage duration.
 ## Static Storage Duration
 
 An object has **static storage duration** when its identifier is declared
-with external or internal linkage, or with the `static` storage-class
-specifier, provided that it does not have thread storage duration.
+with external or internal linkage, or with the [`static`](../keywords/static.md)
+storage-class specifier, provided that it does not have thread storage duration.
 File-scope objects and block-scope objects declared with `static` are
 common examples.
 
@@ -298,8 +298,8 @@ regardless of whether their identifiers have external or internal
 linkage. Objects declared with a thread-storage specifier are an
 exception, having thread storage duration instead.
 
-The `static` storage-class specifier is not required to give an
-ordinary file-scope object static storage duration.
+The [`static`](../keywords/static.md) storage-class specifier is not required
+to give an ordinary file-scope object static storage duration.
 
 ```c
 /* At file scope: */
@@ -346,8 +346,8 @@ not functions.
 
 ### Block-Scope Static Objects
 
-An object declared with `static` at block scope has static storage
-duration, but its identifier ordinarily has **no linkage**.
+An object declared with [`static`](../keywords/static.md) at block scope has
+static storage duration, but its identifier ordinarily has **no linkage**.
 
 Although the identifier is visible only within its scope, the object's
 lifetime extends throughout program execution. Leaving the block does
@@ -494,9 +494,9 @@ int* values = (int[]){10, 20, 30};
 ```
 
 Since C23, a compound literal associated with block scope can also
-explicitly specify `static`, giving its unnamed object static storage
-duration rather than the automatic storage duration normally associated
-with a block-scope compound literal.
+explicitly specify [`static`](../keywords/static.md), giving its unnamed object
+static storage duration rather than the automatic storage duration normally
+associated with a block-scope compound literal.
 
 ```c
 /* C23 */
@@ -551,8 +551,8 @@ do not themselves have const-qualified array type.
 ### Relationship to Thread Storage Duration
 
 Since C11, the thread-storage specifier `_Thread_local` can appear
-together with `static`. C23 introduces the `thread_local` keyword
-spelling.
+together with [`static`](../keywords/static.md). C23 introduces the
+`thread_local` keyword spelling.
 
 An object declared with both `static` and a thread-storage specifier
 has **thread storage duration**, not static storage duration.
@@ -603,8 +603,9 @@ In C11 and C17, `<threads.h>` also defines `thread_local` as a convenience
 macro expanding to `_Thread_local`. Since C23, `thread_local` is a language
 keyword itself and no longer requires the header.
 
-The thread-storage specifier may appear alone or alongside `static` or `extern`,
-subject to the rules governing its declaration context.
+The thread-storage specifier may appear alone or alongside
+[`static`](../keywords/static.md) or `extern`, subject to the rules governing 
+its declaration context.
 
 For example, at file scope:
 
@@ -770,7 +771,8 @@ Other aspects of its declaration determine where its identifier is visible and
 whether declarations refer to the same entity.
 
 At file scope, `static thread_local` gives the identifier internal linkage,
-while `thread_local` without `static` ordinarily gives it external linkage.
+while `thread_local` without [`static`](../keywords/static.md) ordinarily
+gives it external linkage.
 
 At block scope, `static thread_local` declares an object with thread storage
 duration and no linkage.
@@ -870,8 +872,8 @@ returns, provided that the associated thread's lifetime has not ended.
 As with named thread-local objects, indirectly accessing this object from
 another thread is implementation-defined.
 
-The use of `static` alongside `thread_local` is required
-here because the compound literal occurs at block scope.
+The use of [`static`](../keywords/static.md) alongside `thread_local` is
+required here because the compound literal occurs at block scope.
 
 This syntax was introduced in C23; compilers that support the `thread_local`
 keyword may not yet support storage-class specifiers in compound literals.
@@ -1589,7 +1591,7 @@ declaration specifiers of a declaration.
 
 C23 permits the following exceptions:
 
-- `thread_local` may appear with `static` or `extern`.
+- `thread_local` may appear with [`static`](../keywords/static.md) or `extern`.
 - `auto` may appear with any other storage-class specifier except `typedef`.
 - `constexpr` may appear with `auto`, `register`, or `static`.
 
@@ -1728,8 +1730,8 @@ The storage-class specifiers must satisfy the constraints that would
 apply to the corresponding object definition at the associated scope.
 
 In particular, a compound literal with thread storage duration
-associated with block scope must include `static` alongside
-`thread_local`.
+associated with block scope must include [`static`](../keywords/static.md) 
+alongside `thread_local`.
 
 The C23 compound-literal rules also specify undefined behavior for
 the use of unsupported storage-class specifiers.
@@ -1777,9 +1779,9 @@ and compiler-generated temporaries.
 
 The available settings include:
 
-- `-fstack-reuse=all`: Allow reuse for local variables and temporaries.
+- `-fstack-reuse=all`:        Allow reuse for local variables and temporaries.
 - `-fstack-reuse=named_vars`: Limit reuse to named local variables.
-- `-fstack-reuse=none`: Disable this stack-reuse optimization.
+- `-fstack-reuse=none`:       Disable this stack-reuse optimization.
 
 GCC ordinarily defaults to `-fstack-reuse=all` [1].
 
@@ -1799,7 +1801,7 @@ variables that lack explicit initializers in their source code [2].
 
 The option supports two particularly useful modes:
 
-- `-ftrivial-auto-var-init=zero`: Fill affected variables with zeros.
+- `-ftrivial-auto-var-init=zero`:    Fill affected variables with zeros.
 - `-ftrivial-auto-var-init=pattern`: Fill affected variables with a
   recognizable pattern intended to expose programming errors.
 
