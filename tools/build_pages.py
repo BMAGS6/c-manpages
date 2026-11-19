@@ -44,6 +44,7 @@ SITE_NAVIGATION = ROOT / "tools" / "site_navigation.py"
 INDEX_TEMPLATE = ROOT / "templates" / "index.html"
 SITE_CATALOG = BUILD_DIR / "site-catalog.json"
 SITE_INDEX = BUILD_DIR / "html" / "index.html"
+INDEX_SUMMARIES = BUILD_DIR / "index-summaries.json"
 
 # Restrict page filenames to predictable, portable Unix-man identifiers.
 STEM_PATTERN = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*\Z")
@@ -114,6 +115,45 @@ def read_metadata(source):
         if key not in values:
             raise BuildError(f"{source}: missing required metadata field '{key}'")
     return values
+
+
+def read_name_summary(page):
+    """Extract the human-readable description from a manual's # NAME section.
+
+    This project uses the canonical manpage `name -- short description` form.
+    Reusing that text on the homepage avoids maintaining a second description
+    in page metadata or templates. Source syntax stays plain, escaped by the
+    HTML renderer. A malformed NAME section fails visibly during the build.
+    """
+    lines = page.source.read_text(encoding="utf-8").splitlines()
+    in_name = False
+    content = []
+    for line in lines:
+        if not in_name:
+            in_name = line.strip() == "# NAME"
+            continue
+        if line.startswith("# "):
+            break
+        if line.strip():
+            content.append(line.strip())
+        elif content:
+            break
+
+    full_name = " ".join(content)
+    prefix = f"{page.name} -- "
+    if not full_name.startswith(prefix):
+        raise BuildError(
+            f"{page.source}: NAME section must start with '{prefix}'"
+        )
+
+    summary = full_name[len(prefix):]
+    # Keep this lightweight: NAME is plain prose, with optional inline code or
+    # simple links. The HTML renderer is responsible for output escaping.
+    summary = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", summary)
+    summary = summary.replace("`", "").replace("**", "")
+    if not summary.strip():
+        raise BuildError(f"{page.source}: NAME description is empty")
+    return summary
 
 
 def discover_pages(page_dir=None):
@@ -362,6 +402,17 @@ class Builder:
         write_if_changed(SITE_CATALOG, content)
         return catalog
 
+    def build_index_summaries(self):
+        """Build a stable NAME-derived homepage index without touching manuals.
+
+        The sidecar changes only when summaries change. This keeps homepage
+        descriptions current without causing unrelated manual HTML rebuilds.
+        """
+        summaries = {page.name: read_name_summary(page) for page in self.pages}
+        contents = json.dumps(summaries, indent=2, ensure_ascii=False) + "\n"
+        write_if_changed(INDEX_SUMMARIES, contents)
+        return summaries
+
     def build_site_index(self, catalog):
         """Generate the offline homepage and category index incrementally.
 
@@ -369,7 +420,9 @@ class Builder:
         and its index links are computed from the registered page identities.
         Existing valid output is not overwritten if rendering fails.
         """
-        dependencies = (SITE_CATALOG, INDEX_TEMPLATE, SITE_CSS, SITE_NAVIGATION, THIS_FILE)
+        summaries = self.build_index_summaries()
+        dependencies = (SITE_CATALOG, INDEX_SUMMARIES, INDEX_TEMPLATE, SITE_CSS,
+                        SITE_NAVIGATION, THIS_FILE)
         if not needs_build(SITE_INDEX, dependencies):
             return
         template = Template(INDEX_TEMPLATE.read_text(encoding="utf-8"))
@@ -377,7 +430,7 @@ class Builder:
             site_css=SITE_CSS.read_text(encoding="utf-8"),
             navigation=render_navigation(catalog),
             mobile_navigation=render_navigation(catalog, id_prefix="mobile-nav-group"),
-            categories=render_index_categories(catalog),
+            categories=render_index_categories(catalog, summaries),
             page_count=str(len(catalog)),
         )
         write_atomic(SITE_INDEX, rendered)

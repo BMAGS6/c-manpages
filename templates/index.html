@@ -9,7 +9,7 @@
 ${site_css}
 </style>
 </head>
-<body>
+<body class="home-page">
 <a class="skip-link" href="#main-content">Skip to content</a>
 <header class="site-header">
     <a class="site-brand" href="index.html" aria-current="page">C Manual Pages</a>
@@ -27,16 +27,62 @@ ${site_css}
             </div>
         </div>
     </aside>
-    <main id="main-content" class="site-content">
-        <div class="page-eyebrow">C language reference</div>
-        <h1 class="page-title">C Manual Pages</h1>
-        <p class="page-subtitle">Syntax, semantics, and history of the C programming language.</p>
-        <p class="index-intro">Browse ${page_count} available manual pages by category. Each document
-        is also available as a Unix manual page; the HTML version works offline
-        and requires no JavaScript.</p>
-        <div class="index-categories">
-            ${categories}
-        </div>
+    <main id="main-content" class="site-content home-content">
+        <section class="home-hero" aria-labelledby="home-title">
+            <div class="home-hero-copy">
+                <p class="page-eyebrow">THE C LANGUAGE · C23 BASELINE</p>
+                <h1 id="home-title" class="home-title">C, explained<br><span>with care.</span></h1>
+                <p class="home-lede">An approachable, rigorous reference to the C
+                programming language. Understand the rules, explore real-world
+                implementations, and discover the history behind the language.</p>
+                <div class="home-actions">
+                    <a class="home-primary-action" href="#manuals">Browse the manuals <span aria-hidden="true">↘</span></a>
+                    <a class="home-secondary-action" href="https://github.com/BMAGS6/c-manpages">View source on GitHub</a>
+                </div>
+            </div>
+            <div class="home-mark" aria-hidden="true">
+                <span class="home-mark-letter">C</span>
+                <span class="home-mark-caption">MANUAL<br>PAGES</span>
+            </div>
+        </section>
+
+        <section class="home-principles" aria-label="About the reference">
+            <div class="home-principle">
+                <h2>Language semantics</h2>
+                <p>Precise explanations of what ISO C requires, with practical examples.</p>
+            </div>
+            <div class="home-principle">
+                <h2>Real implementations</h2>
+                <p>Compiler details, systems behavior, and portability considerations.</p>
+            </div>
+            <div class="home-principle">
+                <h2>History and context</h2>
+                <p>Standards evolution and primary sources that explain how C got here.</p>
+            </div>
+        </section>
+
+        <section id="manuals" class="home-directory" aria-labelledby="manuals-heading">
+            <div class="home-directory-heading">
+                <div>
+                    <p class="page-eyebrow">THE REFERENCE</p>
+                    <h2 id="manuals-heading">Browse the manuals</h2>
+                </div>
+                <p>${page_count} available · Section 7</p>
+            </div>
+            <div class="index-categories">
+                ${categories}
+            </div>
+        </section>
+
+        <aside class="home-offline-note" aria-label="Offline use">
+            <div>
+                <h2>Built for the web. At home in a terminal.</h2>
+                <p>Every manual can also be built as a traditional Unix man page.
+                The HTML works offline and requires no JavaScript, external fonts,
+                or runtime dependencies.</p>
+            </div>
+            <code>make html</code>
+        </aside>
         <footer class="page-footer">Generated from Markdown · C Manual Pages</footer>
     </main>
 </div>
