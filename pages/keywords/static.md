@@ -10,9 +10,9 @@ c-static -- the `static` keyword and storage-class specifier in C
 
 `static` is a keyword and storage-class specifier in C whose meaning depends on
 its context. It can give an identifier **internal linkage**, give an object
-**static storage duration**, specify the storage duration of a **compound
-literal**, or establish a **minimum accessible array size in a function
-parameter declaration**.
+**static** [**storage duration**](../concepts/storage-duration.md), specify the
+storage duration of a **compound literal**, or establish a **minimum accessible 
+array size in a function parameter declaration**.
 
 # OVERVIEW
 
@@ -21,8 +21,9 @@ In declarations -- and, since C23, in compound literals -- `static` acts as a
 
 At file scope, `static` gives an object or function identifier **internal
 linkage**, restricting references through that identifier to the same
-translation unit. At block scope, `static` ordinarily gives an object **static
-storage duration**, so that its value persists between executions of the block.
+translation unit. At block scope, `static` ordinarily gives an object
+**static** [**storage duration**](../concepts/storage-duration.md),
+so that its value persists between executions of the block.
 A block-scope object declared with `static` has **no linkage**.
 
 When combined with `thread_local` (or `_Thread_local` in C11 and C17), `static`
@@ -107,9 +108,10 @@ within the same translation unit where their declarations are visible. Internal
 linkage restricts the use of the identifier, not necessarily access to the
 object through a pointer supplied by another function.
 
-File-scope objects not declared with `thread_local` already have static storage
-duration, regardless of whether `static` is present. At file scope, the
-significant effect of `static` is therefore on linkage.
+File-scope objects not declared with `thread_local` already have static
+[storage duration](../concepts/storage-duration.md), regardless of whether `static`
+is present. At file scope, the significant effect of `static` is therefore on
+linkage.
 
 ```c
 /* At file scope: */
@@ -125,9 +127,10 @@ storage duration.
 ## Block-Scope Objects
 
 When `static` appears in the declaration of an object at block scope, the object
-has **static storage duration**, unless `thread_local` is also specified. An
-object with static storage duration exists throughout program execution, rather
-than being created anew each time execution enters its block.
+has **static** [**storage duration**](../concepts/storage-duration.md),
+unless `thread_local` is also specified. An object with static storage duration
+exists throughout program execution, rather than being created anew each time
+execution enters its block.
 
 ```c
 void example(void)
@@ -162,7 +165,7 @@ For more information, see `c-storage-duration(7)` and `c-initialization(7)`.
 ## Compound Literals
 
 Since C23, `static` may appear as a storage-class specifier in a compound
-literal. The resulting unnamed object has **static storage duration**.
+literal. The resulting unnamed object has **static** [**storage duration**](../concepts/storage-duration.md).
 
 ```c
 void example(void)
@@ -242,7 +245,7 @@ access to at least `count` elements.
 
 - A function declaration using `static` as a storage-class specifier must appear
   at file scope. A block-scope function declaration cannot use it.
-- An object with static or thread storage duration cannot have a variable length
+- An object with static or thread [storage duration](../concepts/storage-duration.md) cannot have a variable length
   array type.
 - In an array parameter declarator, `static` is permitted only in the outermost
   array type derivation. Its bound must have integer type and must be positive
@@ -473,7 +476,7 @@ subsequent extensions of `static`:
   the familiar uses of `static` for persistent local objects and file-local
   objects and functions [5].
 - **1989 (C89):** Standardized the established declaration uses of `static`,
-  including internal linkage and static storage duration.
+  including internal linkage and static [storage duration](../concepts/storage-duration.md).
 - **1999 (C99):** Introduced `static` within array parameter declarators.
 - **2011 (C11):** Introduced `_Thread_local`, which may be combined with
   `static` to give an object thread storage duration.
