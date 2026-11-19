@@ -349,7 +349,17 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
     background: var(--surface);
     overflow: hidden;
 }
-.home-mark-letter { font-size: clamp(8rem, 16vw, 11rem); font-weight: 750; line-height: 1; letter-spacing: -.12em; transform: translateX(-.05em); }
+.home-mark-letter {
+    /* Local Helvetica-style faces only; no downloaded fonts. */
+    font-family: "Helvetica Neue", Helvetica, "Nimbus Sans",
+                 "Liberation Sans", Arial, sans-serif;
+    font-size: clamp(8rem, 16vw, 11rem);
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: -.12em;
+    color: #B0C4DE; /* LightSteelBlue */
+    transform: translateX(-.05em);
+}
 .home-mark-caption {
     position: absolute;
     bottom: 15px;
