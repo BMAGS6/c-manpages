@@ -125,6 +125,39 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(original, transformed)
         self.assertEqual(targets, set())
 
+    def test_mdoc_table_links_render_as_text_but_prose_uses_xr(self):
+        """tbl must contain no link macros, while prose retains references."""
+        original = (
+            '.Sh INDEX\n.TS\ntab(|) expand allbox;\nl.\n'
+            'T{\n.Lk ../concepts/storage-duration.md duration\nT}\n'
+            'T{\n.Lk https://example.org External site\nT}\n'
+            'T{\n.Mt user@example.org email\nT}\n'
+            'T{\n.Lk ../concepts/storage-duration.md .hidden\nT}\n'
+            '.TE\n'
+            '.Lk ../concepts/storage-duration.md storage duration\n'
+            '.Lk https://example.org outside\n'
+        )
+        transformed, targets = rewrite_mdoc(original, self.resolver, self.static)
+        table = transformed.split('.TS\n', 1)[1].split('.TE\n', 1)[0]
+        self.assertIn('duration\n', table)
+        self.assertIn('External site\n', table)
+        self.assertIn('email\n', table)
+        self.assertIn(r'\&.hidden', table)
+        self.assertNotIn('.Lk ', table)
+        self.assertNotIn('.Mt ', table)
+        self.assertNotIn('.Xr ', table)
+        self.assertIn('.Xr c-storage-duration 7\n', transformed)
+        self.assertIn('.Lk https://example.org outside\n', transformed)
+        self.assertEqual(targets, {self.duration.source})
+
+    def test_table_links_still_validate_destinations_and_fragments(self):
+        """A plain-text tbl cell must not conceal a broken internal link."""
+        for link in ('../concepts/missing.md',
+                     '../concepts/storage-duration.md#nonexistent'):
+            with self.subTest(link=link), self.assertRaises(ReferenceError):
+                rewrite_mdoc(f'.TS\n.Lk {link} label\n.TE\n',
+                             self.resolver, self.static)
+
 
 if __name__ == "__main__":
     unittest.main()

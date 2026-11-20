@@ -230,36 +230,60 @@ def rewrite_html(document, resolver, page):
 
 
 def rewrite_mdoc(document, resolver, page):
-    """Convert internal lowdown ``.Lk`` macros into semantic mdoc ``.Xr``.
+    """Use ``.Xr`` for ordinary internal links; use text in tbl cells.
 
-    Lowdown's verified output places each link on its own macro line:
+    Lowdown emits links on separate ``.Lk URL label`` lines (or ``.Mt`` for
+    email).  Inside a ``.TS`` ... ``.TE`` tbl block, mandoc cannot process
+    mdoc macros. Replace those link macros with their already-roff-escaped
+    display text, falling back to the URL when no label is present.
 
-        .Lk ../concepts/storage-duration.md storage duration
-
-    We only inspect lines starting with that macro. The first argument is the
-    URL; remaining macro arguments are display text. An ``.Xr`` macro must use
-    the *manual's* actual name and section, so it cannot retain an arbitrary
-    Markdown link label. External ``.Lk`` macros remain verbatim.
-
-    This is a deliberately constrained mdoc-macro transformation, not a regex
-    over arbitrary HTML, Markdown, or human-readable prose.
+    Internal links are *always* resolved and tracked, including in tables,
+    so the normal broken-link and dependency checks remain intact. Outside
+    tables, internal links become semantic ``.Xr`` references and other
+    link macros remain unchanged. HTML links are handled independently.
     """
     output = []
     targets = set()
+    in_table = False
     for line in document.splitlines(keepends=True):
-        if not line.startswith(".Lk "):
+        # Tables emitted by lowdown are delimited by tbl's .TS/.TE requests.
+        directive = line.split(maxsplit=1)[0] if line.strip() else ""
+        if directive == ".TS":
+            in_table = True
             output.append(line)
             continue
-        components = line[4:].split(maxsplit=1)
+        if directive == ".TE":
+            in_table = False
+            output.append(line)
+            continue
+
+        is_link = line.startswith(".Lk ")
+        is_email = line.startswith(".Mt ")
+        if not is_link and not is_email:
+            output.append(line)
+            continue
+
+        components = line[4:].strip().split(maxsplit=1)
         if not components:
             output.append(line)
             continue
-        resolved = resolver.resolve(components[0], page)
-        if resolved is None:
+
+        resolved = resolver.resolve(components[0], page) if is_link else None
+        if resolved is not None:
+            target, _fragment = resolved
+            targets.add(target.source)
+
+        if in_table:
+            label = components[1] if len(components) > 1 else components[0]
+            # Roff treats a leading '.' or apostrophe as a request. Make
+            # even such link labels safe when changed into ordinary text.
+            if label.startswith((".", "'")):
+                label = r"\&" + label
+            ending = "\n" if line.endswith("\n") else ""
+            output.append(f"{label}{ending}")
+        elif resolved is not None:
+            ending = "\n" if line.endswith("\n") else ""
+            output.append(f".Xr {target.name} {target.section}{ending}")
+        else:
             output.append(line)
-            continue
-        target, _fragment = resolved
-        targets.add(target.source)
-        line_ending = "\n" if line.endswith("\n") else ""
-        output.append(f".Xr {target.name} {target.section}{line_ending}")
     return "".join(output), targets

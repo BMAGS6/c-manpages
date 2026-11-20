@@ -34,7 +34,7 @@ context and link to dedicated manuals where available.
 | `inline`        | `int`                 | `long`          |
 | `nullptr`       | `register`            | `restrict`      |
 | `return`        | `short`               | `signed`        |
-| `sizeof`        | `static`              | `static_assert` |
+| `sizeof`        | [`static`](static.md) | `static_assert` |
 | `struct`        | `switch`              | `thread_local`  |
 | `true`          | `typedef`             | `typeof`        |
 | `typeof_unqual` | `union`               | `unsigned`      |
